@@ -7,6 +7,7 @@ import (
 	"io"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
@@ -50,4 +51,60 @@ func (mock *MockReader) ReadRecords(basket []stream.Record) (n int, err error) {
 	default:
 		return n, io.EOF
 	}
+}
+
+// DelayReader returns a reader which delays every read by a fixed duration.
+func DelayReader(r stream.Reader, d time.Duration) stream.Reader {
+	if d <= 0 {
+		panic("illegal delay")
+	}
+	return &delayReader{r, d}
+}
+
+type delayReader struct {
+	r stream.Reader
+	d time.Duration
+}
+
+// ReadRecords implements stream.Reader.
+func (d *delayReader) ReadRecords(basket []stream.Record) (n int, err error) {
+	time.Sleep(d.d)
+	return d.ReadRecords(basket)
+}
+
+// DripNReader returns a reader which hits io.EOF every n records, starting with
+// the first.
+func DripNReader(r stream.Reader, n int) stream.Reader {
+	if n <= 0 {
+		panic("illegal drip count")
+	}
+	return &dripReader{r: r, dripN: n, remainN: 0}
+}
+
+type dripReader struct {
+	r              stream.Reader
+	dripN, remainN int
+}
+
+// ReadRecords implements stream.Reader.
+func (d *dripReader) ReadRecords(basket []stream.Record) (n int, err error) {
+	if d.remainN == 0 {
+		d.remainN = d.dripN
+		return 0, io.EOF
+	}
+
+	if len(basket) > d.remainN {
+		basket = basket[:d.remainN]
+	}
+
+	n, err = d.r.ReadRecords(basket)
+	if n < 0 || n > len(basket) {
+		panic("read count out of bounds")
+	}
+	d.remainN -= n
+	if err == nil && d.remainN == 0 {
+		err = io.EOF
+		d.remainN = d.dripN
+	}
+	return
 }
