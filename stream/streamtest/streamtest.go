@@ -108,3 +108,28 @@ func (d *dripReader) ReadRecords(basket []stream.Record) (n int, err error) {
 	}
 	return
 }
+
+type channelReader struct {
+	C <-chan stream.Record
+}
+
+// ReadRecords implements stream.Reader.
+func (r *channelReader) ReadRecords(basket []stream.Record) (n int, err error) {
+	for {
+		if len(r.C) == 0 {
+			return n, io.EOF
+		}
+		if n >= len(basket) {
+			return n, nil
+		}
+
+		basket[n] = <-r.C
+		n++
+	}
+}
+
+// ChannelReader returns a reader which serves from channel input.
+func ChannelReader(bufN int) (stream.Reader, chan<- stream.Record) {
+	c := make(chan stream.Record, bufN)
+	return &channelReader{c}, c
+}

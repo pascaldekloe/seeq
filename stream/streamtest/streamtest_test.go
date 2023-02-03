@@ -109,3 +109,52 @@ func TestMockReaderRoutines(t *testing.T) {
 		t.Fatalf("second read got (%d, %v), want error with %q", n, err, want)
 	}
 }
+
+func TestChannelReader(t *testing.T) {
+	t.Run("EmptyBucket", func(t *testing.T) {
+		r, ch := streamtest.ChannelReader(12)
+		n, err := r.ReadRecords(nil)
+		if n != 0 || err != io.EOF {
+			t.Errorf("read on empty channel got (%d, %v), want (0, EOF)", n, err)
+		}
+
+		ch <- stream.Record{}
+		n, err = r.ReadRecords(nil)
+		if n != 0 || err != nil {
+			t.Errorf("read on channel content got (%d, %v), want (0, nil)", n, err)
+		}
+	})
+
+	t.Run("Refill", func(t *testing.T) {
+		r, ch := streamtest.ChannelReader(99)
+		var buf [7]stream.Record
+
+		for i := 0; i < len(buf); i++ {
+			ch <- stream.Record{}
+		}
+		n, err := r.ReadRecords(buf[:])
+		if n != len(buf) || err != io.EOF {
+			t.Errorf("initial read got (%d, %v), want (%d, EOF)", n, err, len(buf))
+		}
+		n, err = r.ReadRecords(buf[:])
+		if n != 0 || err != io.EOF {
+			t.Errorf("read after EOF got (%d, %v), want (0, EOF)", n, err)
+		}
+
+		for i := 0; i < 2*len(buf); i++ {
+			ch <- stream.Record{}
+		}
+		n, err = r.ReadRecords(buf[:])
+		if n != len(buf) || err != nil {
+			t.Errorf("read refill got (%d, %v), want (%d, nil)", n, err, len(buf))
+		}
+		n, err = r.ReadRecords(buf[:])
+		if n != len(buf) || err != io.EOF {
+			t.Errorf("read refill got (%d, %v), want (%d, EOF)", n, err, len(buf))
+		}
+		n, err = r.ReadRecords(buf[:])
+		if n != 0 || err != io.EOF {
+			t.Errorf("read after EOF got (%d, %v), want (0, EOF)", n, err)
+		}
+	})
+}
