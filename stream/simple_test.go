@@ -10,7 +10,7 @@ import (
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// enure interface compliance
+// ensure interface compliance
 var _ = stream.Reader((*stream.SimpleReader)(nil))
 
 func TestSimpleReader(t *testing.T) {
@@ -41,23 +41,6 @@ func TestSimpleReader(t *testing.T) {
 		}
 	})
 
-	t.Run("SmallReads", func(t *testing.T) {
-		const sample = "\x00\x00\x00\x1B\x00\x00\x00\x03text/plain;charset=us-asciiONE" +
-			"\x00\x00\x00\x0A\x00\x00\x00\x03text/plainTWO"
-		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 3)
-		n, err := r.ReadRecords(buf)
-		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
-		}
-		if n != 2 {
-			t.Errorf("got %d records, want 2", n)
-		}
-		assertRecord(t, buf, 0, "text/plain;charset=us-ascii", "ONE")
-		assertRecord(t, buf, 1, "text/plain", "TWO")
-		assertRecord(t, buf, 2, "", "")
-	})
-
 	t.Run("NoData", func(t *testing.T) {
 		r := stream.SimpleReader{R: strings.NewReader("")}
 		buf := make([]stream.Record, 2)
@@ -75,7 +58,7 @@ func TestSimpleReader(t *testing.T) {
 
 	t.Run("1stHeaderTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00" // incomplete header
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -91,7 +74,7 @@ func TestSimpleReader(t *testing.T) {
 
 	t.Run("1stBodyNone", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03" // absent body
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -107,7 +90,7 @@ func TestSimpleReader(t *testing.T) {
 
 	t.Run("1stBodyTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03tex" // incomplete body
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -123,7 +106,7 @@ func TestSimpleReader(t *testing.T) {
 
 	t.Run("2ndHeaderNone", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE"
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -139,7 +122,7 @@ func TestSimpleReader(t *testing.T) {
 	t.Run("2ndHeaderTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE" +
 			"\x00\x00\x00\x0A\x00\x00" // incomplete header
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -155,7 +138,7 @@ func TestSimpleReader(t *testing.T) {
 	t.Run("2ndBodyNone", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE" +
 			"\x00\x00\x00\x0A\x00\x00\x00\x03" // absent body
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -170,8 +153,8 @@ func TestSimpleReader(t *testing.T) {
 
 	t.Run("2ndBodyTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE" +
-			"\x00\x00\x00\x0A\x00\x00\x00\x03tex" // incomplete body
-		r := stream.SimpleReader{R: strings.NewReader(sample)}
+			"\x00\x00\x00\x0A\x00\x00\x00\x03text/plainT" // incomplete body
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
 		buf := make([]stream.Record, 2)
 		n, err := r.ReadRecords(buf)
 		if err != io.EOF {
@@ -182,6 +165,22 @@ func TestSimpleReader(t *testing.T) {
 		}
 		assertRecord(t, buf, 0, "text/plain", "ONE")
 		assertRecord(t, buf, 1, "", "")
+	})
+
+	t.Run("ReadFull", func(t *testing.T) {
+		const sample = "\x00\x00\x00\x1B\x00\x00\x00\x03text/plain;charset=us-asciiONE" +
+			"\x00\x00\x00\x0A\x00\x00\x00\x03text/plainTWO"
+		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
+		buf := make([]stream.Record, 2)
+		n, err := r.ReadRecords(buf)
+		if err != io.EOF {
+			t.Fatalf("got read records error %v, want io.EOF", err)
+		}
+		if n != 2 {
+			t.Errorf("got %d records, want 2", n)
+		}
+		assertRecord(t, buf, 0, "text/plain;charset=us-ascii", "ONE")
+		assertRecord(t, buf, 1, "text/plain", "TWO")
 	})
 }
 

@@ -33,9 +33,6 @@ An aggregate is considdered to be live once it reaches the end of its stream,
 i.e., the moment it includes all information available.
 
 
-[^1]: Payloads can be deleted.
-
-
 ## Read-Only View
 
 Querying on aggregates which are connected to a live stream burdens development
@@ -79,10 +76,11 @@ in isolation. Aggregates are taken offline for queries (on demand) once live.
 
 Aggregates can build from streams in isolation. Eventual consistency can get
 cumbersome when multiple aggregates are needed in conjunction. Seeq provides an
-option to update aggregates in a group.
+option to update aggregates in a group with just a `struct` container and its
+contstuctor.
 
 ```go
-// RFCSeries demonstrates an arbitrary custom aggregate set.
+// RFCSeries demonstrates the grouping of five custom aggregates.
 type RFCSeries struct {
 	Statuses  *RFCStatusIndex `aggregate`
 	Reffs     *ReferenceGraph `aggregate`
@@ -92,12 +90,12 @@ type RFCSeries struct {
 }
 
 // NewRFCSeries returns a new set of empty aggregates ready for use.
-func NewRFCSeries() (*PaperInedx, error) {
+func NewRFCSeries() (*RFCSeries, error) {
 	…
 }
 ```
 
-The example above can be synchronised with just `seeq.NewFastGroup(NewRFCSeries)`.
+The example above can work with `seeq.NewLightGroup[RFCSeries](NewRFCSeries)`.
 
 ```go
 	// get aggregates which were live no longer than a minute ago
@@ -117,3 +115,6 @@ The example above can be synchronised with just `seeq.NewFastGroup(NewRFCSeries)
 ## References
 
 * https://martinfowler.com/bliki/CQRS.html
+
+
+[^1]: Payloads can be deleted.
