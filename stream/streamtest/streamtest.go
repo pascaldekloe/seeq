@@ -6,57 +6,81 @@ import (
 	"errors"
 	"io"
 	"runtime/debug"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// MockReader serves from a slice, with an option for custom errors.
-type MockReader struct {
-	sync.Mutex
+type channelReader struct {
+	c <-chan stream.Entry
 
-	Queue []stream.Entry // pending reads
-
-	// Err is returned after Queue exhoustion. Nil defaults to io.EOF.
-	Err error
-
-	readRoutineID []byte // concurrency detection
+	// concurrency detection
+	goroutineID atomic.Pointer[string]
 }
 
 // Read implements stream.Reader.
-func (mock *MockReader) Read(basket []stream.Entry) (n int, err error) {
-	goroutineID := bytes.Fields(debug.Stack())[1]
-
-	mock.Lock()
-	defer mock.Unlock()
-
-	switch {
-	case mock.readRoutineID == nil:
-		// set on first read
-		mock.readRoutineID = goroutineID
-	case string(mock.readRoutineID) == string(goroutineID):
-		break // pass OK
-	default:
-		return 0, errors.New("mock stream read ⛔️ from multiple goroutines")
+func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
+	goroutineID := string(bytes.Fields(debug.Stack())[1])
+	previous := r.goroutineID.Swap(&goroutineID)
+	if previous != nil && *previous != goroutineID {
+		return 0, errors.New("test stream read from multiple goroutines")
 	}
 
-	n = copy(basket, mock.Queue)
-	mock.Queue = mock.Queue[n:] // pass
-	switch {
-	case len(mock.Queue) != 0:
-		return n, nil
-	case mock.Err != nil:
-		return n, mock.Err
-	default:
-		return n, io.EOF
+	for {
+		if len(r.c) == 0 {
+			return n, io.EOF
+		}
+		if n >= len(basket) {
+			return n, nil
+		}
+
+		basket[n] = <-r.c
+		n++
 	}
+}
+
+// ChannelReader returns a reader which serves from channel input.
+func ChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
+	c := make(chan stream.Entry, bufN)
+	return &channelReader{c: c}, c
+}
+
+// FixedReader returns a reader which serves a fixed sequence.
+func FixedReader(entries ...stream.Entry) stream.Reader {
+	r, c := ChannelReader(len(entries))
+	for i := range entries {
+		c <- entries[i]
+	}
+	return r
+}
+
+// ErrorReader returns a reader which replaces EOF with a custom error.
+func ErrorReader(r stream.Reader, err error) stream.Reader {
+	if err == nil {
+		panic("need error")
+	}
+	return &errorReader{r, err}
+}
+
+type errorReader struct {
+	r   stream.Reader
+	err error
+}
+
+// Read implements stream.Reader.
+func (r *errorReader) Read(basket []stream.Entry) (n int, err error) {
+	n, err = r.r.Read(basket)
+	if err == io.EOF {
+		err = r.err
+	}
+	return
 }
 
 // DelayReader returns a reader which delays every read by a fixed duration.
 func DelayReader(r stream.Reader, d time.Duration) stream.Reader {
 	if d <= 0 {
-		panic("illegal delay")
+		panic("need positive delay")
 	}
 	return &delayReader{r, d}
 }
@@ -67,9 +91,9 @@ type delayReader struct {
 }
 
 // Read implements stream.Reader.
-func (d *delayReader) Read(basket []stream.Entry) (n int, err error) {
-	time.Sleep(d.d)
-	return d.Read(basket)
+func (r *delayReader) Read(basket []stream.Entry) (n int, err error) {
+	time.Sleep(r.d)
+	return r.r.Read(basket)
 }
 
 // DripNReader returns a reader which hits io.EOF every n entries, starting with
@@ -87,49 +111,24 @@ type dripReader struct {
 }
 
 // Read implements stream.Reader.
-func (d *dripReader) Read(basket []stream.Entry) (n int, err error) {
-	if d.remainN == 0 {
-		d.remainN = d.dripN
+func (r *dripReader) Read(basket []stream.Entry) (n int, err error) {
+	if r.remainN == 0 {
+		r.remainN = r.dripN
 		return 0, io.EOF
 	}
 
-	if len(basket) > d.remainN {
-		basket = basket[:d.remainN]
+	if len(basket) > r.remainN {
+		basket = basket[:r.remainN]
 	}
 
-	n, err = d.r.Read(basket)
+	n, err = r.r.Read(basket)
 	if n < 0 || n > len(basket) {
 		panic("read count out of bounds")
 	}
-	d.remainN -= n
-	if err == nil && d.remainN == 0 {
+	r.remainN -= n
+	if err == nil && r.remainN == 0 {
 		err = io.EOF
-		d.remainN = d.dripN
+		r.remainN = r.dripN
 	}
 	return
-}
-
-type channelReader struct {
-	C <-chan stream.Entry
-}
-
-// Read implements stream.Reader.
-func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
-	for {
-		if len(r.C) == 0 {
-			return n, io.EOF
-		}
-		if n >= len(basket) {
-			return n, nil
-		}
-
-		basket[n] = <-r.C
-		n++
-	}
-}
-
-// ChannelReader returns a reader which serves from channel input.
-func ChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
-	c := make(chan stream.Entry, bufN)
-	return &channelReader{c}, c
 }
