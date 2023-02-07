@@ -8,7 +8,7 @@ import (
 	"math/bits"
 )
 
-// SimpleReader decodes output from a SimpleWriter. Partial records at the end
+// SimpleReader decodes output from a SimpleWriter. Partial entries at the end
 // of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
 type SimpleReader struct {
 	R io.Reader // data source
@@ -17,12 +17,12 @@ type SimpleReader struct {
 	bufI int    // buffer position index
 	bufN int    // buffer byte count
 
-	// Reuse strings intead of a memory allocation per Record.
+	// Reuse strings intead of a memory allocation per Entry.
 	mediaTypes map[string]string
 }
 
-// ReadRecords implements the Reader interface.
-func (r *SimpleReader) ReadRecords(basket []Record) (n int, err error) {
+// Read implements the Reader interface.
+func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 	var bufSplit int // circular buffer appliance
 	switch {
 	case r.buf == nil:
@@ -76,7 +76,7 @@ func (r *SimpleReader) ReadRecords(basket []Record) (n int, err error) {
 			r.bufN += readN
 			if err != nil {
 				if errors.Is(err, io.ErrUnexpectedEOF) {
-					err = io.EOF // partial record at end OK
+					err = io.EOF // partial entry at end OK
 				}
 				return n, err
 			}
@@ -124,12 +124,12 @@ func (r *SimpleReader) ReadRecords(basket []Record) (n int, err error) {
 				r.bufI = 0
 			}
 
-			// read record or more
+			// read entry or more
 			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:], l-r.bufN)
 			r.bufN += readN
 			if err != nil {
 				if errors.Is(err, io.ErrUnexpectedEOF) {
-					err = io.EOF // partial record at end OK
+					err = io.EOF // partial entry at end OK
 				}
 				return n, err
 			}

@@ -1,4 +1,4 @@
-// Package seq implements state collection from streams. State is collected with
+// Package seeq implements state collection from streams into so-called
 // aggregates. This package distinguishes between aggregates that do use block
 // devices [Database] and those who don't [InMemory], as block devices may
 // encounter errors, and they generally require some sort of termination after
@@ -8,7 +8,7 @@ package seeq
 
 import "io"
 
-// InMemory aggregates build state from a stream of T—typically stream.Record.
+// InMemory aggregates build state from a stream of T—typically stream.Entry.
 // There is no error scenario without use of block devices. No shutdown needed
 // either. Malformed content should be reported only. The stream must continue
 // at all times.
@@ -21,7 +21,7 @@ type InMemory[T any] interface {
 	Loader // resets an InMemory to a snapshot
 }
 
-// Database aggregates build state from a stream of T—typically stream.Record.
+// Database aggregates build state from a stream of T—typically stream.Entry.
 // Errors from AddNext are fatal to the aggregate. Malformed content should be
 // reported only. The stream must continue at all times.
 type Database[T any] interface {

@@ -1,4 +1,4 @@
-// Package streamtest provides utilities for tests with sequential recordings.
+// Package streamtest provides utilities for tests with streams.
 package streamtest
 
 import (
@@ -16,7 +16,7 @@ import (
 type MockReader struct {
 	sync.Mutex
 
-	Queue []stream.Record // pending reads
+	Queue []stream.Entry // pending reads
 
 	// Err is returned after Queue exhoustion. Nil defaults to io.EOF.
 	Err error
@@ -24,8 +24,8 @@ type MockReader struct {
 	readRoutineID []byte // concurrency detection
 }
 
-// ReadRecords implements stream.Reader.
-func (mock *MockReader) ReadRecords(basket []stream.Record) (n int, err error) {
+// Read implements stream.Reader.
+func (mock *MockReader) Read(basket []stream.Entry) (n int, err error) {
 	goroutineID := bytes.Fields(debug.Stack())[1]
 
 	mock.Lock()
@@ -38,7 +38,7 @@ func (mock *MockReader) ReadRecords(basket []stream.Record) (n int, err error) {
 	case string(mock.readRoutineID) == string(goroutineID):
 		break // pass OK
 	default:
-		return 0, errors.New("mock stream ⛔️ read from multiple goroutines")
+		return 0, errors.New("mock stream read ⛔️ from multiple goroutines")
 	}
 
 	n = copy(basket, mock.Queue)
@@ -66,17 +66,17 @@ type delayReader struct {
 	d time.Duration
 }
 
-// ReadRecords implements stream.Reader.
-func (d *delayReader) ReadRecords(basket []stream.Record) (n int, err error) {
+// Read implements stream.Reader.
+func (d *delayReader) Read(basket []stream.Entry) (n int, err error) {
 	time.Sleep(d.d)
-	return d.ReadRecords(basket)
+	return d.Read(basket)
 }
 
-// DripNReader returns a reader which hits io.EOF every n records, starting with
+// DripNReader returns a reader which hits io.EOF every n entries, starting with
 // the first.
 func DripNReader(r stream.Reader, n int) stream.Reader {
 	if n <= 0 {
-		panic("illegal drip count")
+		panic("need positive drip count")
 	}
 	return &dripReader{r: r, dripN: n, remainN: 0}
 }
@@ -86,8 +86,8 @@ type dripReader struct {
 	dripN, remainN int
 }
 
-// ReadRecords implements stream.Reader.
-func (d *dripReader) ReadRecords(basket []stream.Record) (n int, err error) {
+// Read implements stream.Reader.
+func (d *dripReader) Read(basket []stream.Entry) (n int, err error) {
 	if d.remainN == 0 {
 		d.remainN = d.dripN
 		return 0, io.EOF
@@ -97,7 +97,7 @@ func (d *dripReader) ReadRecords(basket []stream.Record) (n int, err error) {
 		basket = basket[:d.remainN]
 	}
 
-	n, err = d.r.ReadRecords(basket)
+	n, err = d.r.Read(basket)
 	if n < 0 || n > len(basket) {
 		panic("read count out of bounds")
 	}
@@ -110,11 +110,11 @@ func (d *dripReader) ReadRecords(basket []stream.Record) (n int, err error) {
 }
 
 type channelReader struct {
-	C <-chan stream.Record
+	C <-chan stream.Entry
 }
 
-// ReadRecords implements stream.Reader.
-func (r *channelReader) ReadRecords(basket []stream.Record) (n int, err error) {
+// Read implements stream.Reader.
+func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
 	for {
 		if len(r.C) == 0 {
 			return n, io.EOF
@@ -129,7 +129,7 @@ func (r *channelReader) ReadRecords(basket []stream.Record) (n int, err error) {
 }
 
 // ChannelReader returns a reader which serves from channel input.
-func ChannelReader(bufN int) (stream.Reader, chan<- stream.Record) {
-	c := make(chan stream.Record, bufN)
+func ChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
+	c := make(chan stream.Entry, bufN)
 	return &channelReader{c}, c
 }

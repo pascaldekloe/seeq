@@ -13,12 +13,12 @@ import (
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// QuerySet contains aggregates with any and all records from an input stream
-// applied at some point in time. The AggregateSet is read-only, ready to serve
+// QuerySet contains aggregates with any and all entries from an input stream
+// applied at some point in time. The AggregateSet is read-only—ready to serve
 // queries. No more updates shall be applied.
 type QuerySet[AggregateSet any] struct {
 	Set *AggregateSet // read-only
-	// The sequence number equals the applied record count.
+	// The sequence number equals the amount of stream entries applied.
 	SeqNo uint64
 	// Live is defined as the latest EOF read from the input stream.
 	LiveAt time.Time
@@ -31,7 +31,7 @@ func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 	}
 
 	// support only InMemory for now
-	aggType := reflect.TypeOf(InMemory[stream.Record](nil)).Elem()
+	aggType := reflect.TypeOf(InMemory[stream.Entry](nil)).Elem()
 
 	fieldN := setType.NumField()
 	fields := make([]reflect.StructField, 0, fieldN)
@@ -104,11 +104,11 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 }
 
 // Aggregates returns the aggregate values of a set struct.
-func (g *LightGroup[AggregateSet]) aggregates(set *AggregateSet) []InMemory[stream.Record] {
+func (g *LightGroup[AggregateSet]) aggregates(set *AggregateSet) []InMemory[stream.Entry] {
 	v := reflect.ValueOf(set).Elem()
-	aggs := make([]InMemory[stream.Record], len(g.aggFields))
+	aggs := make([]InMemory[stream.Entry], len(g.aggFields))
 	for i := range aggs {
-		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(InMemory[stream.Record])
+		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(InMemory[stream.Entry])
 	}
 	return aggs
 }
@@ -142,9 +142,9 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 	// once live the QuerySet is offered to release
 	var offerTimer *time.Timer // short-poll delay
 
-	var buf [99]stream.Record
+	var buf [99]stream.Entry
 	for {
-		n, err := in.ReadRecords(buf[:])
+		n, err := in.Read(buf[:])
 		// ⚠️ delayed error check
 
 		if err == io.EOF {
@@ -191,7 +191,7 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 	}
 }
 
-func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], workingCopyAggs []InMemory[stream.Record]) ([]InMemory[stream.Record], error) {
+func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], workingCopyAggs []InMemory[stream.Entry]) ([]InMemory[stream.Entry], error) {
 	// new copy
 	cloneSet, err := g.newSet()
 	if err != nil {

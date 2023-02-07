@@ -14,173 +14,173 @@ import (
 var _ = stream.Reader((*stream.SimpleReader)(nil))
 
 func TestSimpleReader(t *testing.T) {
-	assertRecord := func(t *testing.T, buf []stream.Record, i int, wantMediaType, wantPayload string) {
-		r := &buf[i]
-		if r.MediaType != wantMediaType {
-			t.Errorf("record[%d] got media type %q, want %q", i, r.MediaType, wantMediaType)
+	assertEntry := func(t *testing.T, buf []stream.Entry, i int, wantMediaType, wantPayload string) {
+		e := &buf[i]
+		if e.MediaType != wantMediaType {
+			t.Errorf("entry[%d] got media type %q, want %q", i, e.MediaType, wantMediaType)
 		}
-		if string(r.Payload) != wantPayload {
-			t.Errorf("record[%d] got payload %q, want %q", i, r.Payload, wantMediaType)
+		if string(e.Payload) != wantPayload {
+			t.Errorf("entry[%d] got payload %q, want %q", i, e.Payload, wantMediaType)
 		}
 	}
 
-	t.Run("EmptyRecords", func(t *testing.T) {
-		// two records, both with zero media type and with zero payload
+	t.Run("EmptyEntries", func(t *testing.T) {
+		// two entries, both with zero media type and with zero payload
 		const sample = "\x00\x00\x00\x00\x00\x00\x00\x00" + "\x00\x00\x00\x00\x00\x00\x00\x00"
 		r := stream.SimpleReader{R: strings.NewReader(sample)}
-		buf := make([]stream.Record, 3)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 3)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatal("read records error:", err)
+			t.Fatal("read error:", err)
 		}
 		if n != 2 {
-			t.Errorf("got %d records, want 2", n)
+			t.Errorf("got %d entries, want 2", n)
 		}
 		for i := range buf {
-			assertRecord(t, buf, i, "", "")
+			assertEntry(t, buf, i, "", "")
 		}
 	})
 
 	t.Run("NoData", func(t *testing.T) {
 		r := stream.SimpleReader{R: strings.NewReader("")}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 0 {
-			t.Errorf("got %d records, want 0", n)
+			t.Errorf("got %d entries, want 0", n)
 		}
 		for i := range buf {
-			assertRecord(t, buf, i, "", "")
+			assertEntry(t, buf, i, "", "")
 		}
 	})
 
 	t.Run("1stHeaderTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00" // incomplete header
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 0 {
-			t.Errorf("got %d records, want 0", n)
+			t.Errorf("got %d entries, want 0", n)
 		}
 		for i := range buf {
-			assertRecord(t, buf, i, "", "")
+			assertEntry(t, buf, i, "", "")
 		}
 	})
 
 	t.Run("1stBodyNone", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03" // absent body
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 0 {
-			t.Errorf("got %d records, want 0", n)
+			t.Errorf("got %d entries, want 0", n)
 		}
 		for i := range buf {
-			assertRecord(t, buf, i, "", "")
+			assertEntry(t, buf, i, "", "")
 		}
 	})
 
 	t.Run("1stBodyTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03tex" // incomplete body
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 0 {
-			t.Errorf("got %d records, want none", n)
+			t.Errorf("got %d entries, want none", n)
 		}
 		for i := range buf {
-			assertRecord(t, buf, i, "", "")
+			assertEntry(t, buf, i, "", "")
 		}
 	})
 
 	t.Run("2ndHeaderNone", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE"
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 1 {
-			t.Errorf("got %d records, want 1", n)
+			t.Errorf("got %d entries, want 1", n)
 		}
-		assertRecord(t, buf, 0, "text/plain", "ONE")
-		assertRecord(t, buf, 1, "", "")
+		assertEntry(t, buf, 0, "text/plain", "ONE")
+		assertEntry(t, buf, 1, "", "")
 	})
 
 	t.Run("2ndHeaderTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE" +
 			"\x00\x00\x00\x0A\x00\x00" // incomplete header
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 1 {
-			t.Errorf("got %d records, want 1", n)
+			t.Errorf("got %d entries, want 1", n)
 		}
-		assertRecord(t, buf, 0, "text/plain", "ONE")
-		assertRecord(t, buf, 1, "", "")
+		assertEntry(t, buf, 0, "text/plain", "ONE")
+		assertEntry(t, buf, 1, "", "")
 	})
 
 	t.Run("2ndBodyNone", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE" +
 			"\x00\x00\x00\x0A\x00\x00\x00\x03" // absent body
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 1 {
-			t.Errorf("got %d records, want 1", n)
+			t.Errorf("got %d entries, want 1", n)
 		}
-		assertRecord(t, buf, 0, "text/plain", "ONE")
-		assertRecord(t, buf, 1, "", "")
+		assertEntry(t, buf, 0, "text/plain", "ONE")
+		assertEntry(t, buf, 1, "", "")
 	})
 
 	t.Run("2ndBodyTerm", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x0A\x00\x00\x00\x03text/plainONE" +
 			"\x00\x00\x00\x0A\x00\x00\x00\x03text/plainT" // incomplete body
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 1 {
-			t.Errorf("got %d records, want 1", n)
+			t.Errorf("got %d entries, want 1", n)
 		}
-		assertRecord(t, buf, 0, "text/plain", "ONE")
-		assertRecord(t, buf, 1, "", "")
+		assertEntry(t, buf, 0, "text/plain", "ONE")
+		assertEntry(t, buf, 1, "", "")
 	})
 
 	t.Run("ReadFull", func(t *testing.T) {
 		const sample = "\x00\x00\x00\x1B\x00\x00\x00\x03text/plain;charset=us-asciiONE" +
 			"\x00\x00\x00\x0A\x00\x00\x00\x03text/plainTWO"
 		r := stream.SimpleReader{R: iotest.OneByteReader(strings.NewReader(sample))}
-		buf := make([]stream.Record, 2)
-		n, err := r.ReadRecords(buf)
+		buf := make([]stream.Entry, 2)
+		n, err := r.Read(buf)
 		if err != io.EOF {
-			t.Fatalf("got read records error %v, want io.EOF", err)
+			t.Fatalf("got read error %v, want io.EOF", err)
 		}
 		if n != 2 {
-			t.Errorf("got %d records, want 2", n)
+			t.Errorf("got %d entries, want 2", n)
 		}
-		assertRecord(t, buf, 0, "text/plain;charset=us-ascii", "ONE")
-		assertRecord(t, buf, 1, "text/plain", "TWO")
+		assertEntry(t, buf, 0, "text/plain;charset=us-ascii", "ONE")
+		assertEntry(t, buf, 1, "text/plain", "TWO")
 	})
 }
 
@@ -190,17 +190,17 @@ func TestSimpleReaderAllocs(t *testing.T) {
 		"\x00\x00\x00\x0A\x00\x00\x00\x05text/plainTHREE"
 	r := stream.SimpleReader{R: strings.NewReader(sample)}
 
-	// read one record at a time
-	var buf [1]stream.Record
+	// read one entry at a time
+	var buf [1]stream.Entry
 
 	// The anonymous func gets invoked 3 times: 1 warm-up + 2 measured runs.
 	allocAvg := testing.AllocsPerRun(2, func() {
-		n, err := r.ReadRecords(buf[:])
+		n, err := r.Read(buf[:])
 		if err != nil && err != io.EOF {
-			t.Fatal("read records error:", err)
+			t.Fatal("read error:", err)
 		}
 		if n != 1 {
-			t.Fatalf("got %d records, want 1", n)
+			t.Fatalf("got %d entries, want 1", n)
 		}
 		if len(buf[0].MediaType) == 0 {
 			t.Errorf("media type missing")
@@ -210,7 +210,7 @@ func TestSimpleReaderAllocs(t *testing.T) {
 		}
 	})
 
-	// Only the first ReadRecords, which is ignored from the average,
+	// Only the first Read, which is ignored from the average,
 	// may allocate the read buffer and the media-type string.
 	if allocAvg != 0 {
 		t.Errorf("got %f memory alloctions on average, want none", allocAvg)
@@ -226,8 +226,8 @@ func FuzzSimpleReader(f *testing.F) {
 	f.Fuzz(func(t *testing.T, in []byte, n uint8) {
 		r := stream.SimpleReader{R: bytes.NewReader(in)}
 
-		var buf [3]stream.Record
-		_, err := r.ReadRecords(buf[:n&3])
+		var buf [3]stream.Entry
+		_, err := r.Read(buf[:n&3])
 		switch err {
 		case nil, io.EOF:
 			break // OK
