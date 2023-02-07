@@ -266,47 +266,6 @@ func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], wor
 	}
 }
 
-// Clone copies the state from src into dest. The snapshot serial is written
-func CloneWithSnapshot(dest Loader, src Dumper, snapshot io.Writer) error {
-	pr, pw := io.Pipe()
-	defer pr.Close()
-
-	// write snapshot into pipe
-	go func() {
-		err := src.DumpTo(pw)
-		if err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
-	}()
-
-	var r io.Reader
-	if snapshot == nil {
-		r = pr
-	} else {
-		r = io.TeeReader(pr, snapshot)
-	}
-
-	// Load receives errors from src and snapshot through the pipe
-	err := dest.LoadFrom(r)
-	if err != nil {
-		return err
-	}
-
-	/*
-		// partial reads from a Loader are not permitted to prevent mistakes
-		switch n, err := io.Copy(io.Discard, r); {
-		case err != nil:
-			return err
-		case n != 0:
-			return fmt.Errorf("snapshot load from aggregate %s ignored %d bytes", name, n)
-		}
-	*/
-
-	return nil
-}
-
 // ErrLiveFuture denies freshness.
 var ErrLiveFuture = errors.New("agg: live view from future not available")
 
