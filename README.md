@@ -11,33 +11,33 @@ This is free and unencumbered software released into the
 
 ## Concept
 
-**Streams** are append-only[^1] collections. As such, each entry inherits a
-fixed **sequence number**, starting with one—no gaps. Live streams grow over
-time, as opposed to dead streams, which are read-only.
+*Streams* are append-only[^1] collections. As such, each entry inherits a fixed
+*sequence number*—no gaps. *Live* streams grow over time with a shifting end, as
+opposed to suspended streams, which are read-only.
 
 #### Entry Attributes
 
-* Payload [blob]
-* Media Type [MIME]
+* Payload
+* Media Type
 * Sequence Number
 
 Read access is limited to chronological iteration. Reads may start at a sequence
-number offset though.
+number (offset) though.
 
-**Aggregates** consume streams to collect information for one or more specific
+*Aggregates* consume streams to collect information for one or more specific
 questions/queries. The limited scope allows for more optimization on each case.
 Design can pick the most suitable technology for each aggregate/query instead of
 searching for generic components and reuse.
 
 An aggregate is considdered to be live once it reaches the end of its stream,
-i.e., the moment it includes all information available.
+i.e., a moment in which it includes all available information.
 
 
 ## Read-Only View
 
 Querying on aggregates which are connected to a live stream burdens development
 with concurrency issues. Instead, the synchronisation methods update aggregates
-in isolation. Aggregates are taken offline for queries (on demand) once live.
+in isolation. Aggregates go offline on demand for queries.
 
 
          (start)
@@ -74,9 +74,9 @@ in isolation. Aggregates are taken offline for queries (on demand) once live.
 
 ## Aggregate Synchronization
 
-Aggregates can build from streams in isolation. Eventual consistency can get
-cumbersome when multiple aggregates are needed in conjunction. Seeq provides an
-option to update aggregates in a group with just a `struct` container and its
+Aggregates generally build from streams in isolation. Eventual consistency can
+get cumbersome when multiple aggregates are needed in conjunction. Seeq provides
+an option to update aggregates in a group with just a `struct` container and its
 contstuctor.
 
 ```go
@@ -95,7 +95,8 @@ func NewRFCSeries() (*RFCSeries, error) {
 }
 ```
 
-The example above can work with `seeq.NewLightGroup[RFCSeries](NewRFCSeries)`.
+For example, a `seeq.NewLightGroup[RFCSeries](NewRFCSeries)` feeds each tagged
+field. A live copy is aquired with a freshness constraint.
 
 ```go
 	// get aggregates which were live no longer than a minute ago
@@ -105,9 +106,9 @@ The example above can work with `seeq.NewLightGroup[RFCSeries](NewRFCSeries)`.
 		return
 	}
 
-	log.Print("all aggregates are at sequence number ", offline.SeqNo)
-	log.Print("got ", offline.Set.Authors.N, " RFC authors")
-	log.Print("got ", len(offline.Set.Reffs.PerRFC[2616].Inbound), " references to RFC 2616")
+	log.Printf("all %T aggregates are at sequence № %d", offline.Set, offline.SeqNo)
+	log.Print("got %d RFC authors", offline.Set.Authors.N)
+	log.Print("got %d references to RFC 2616", len(offline.Set.Reffs.PerRFC[2616].Inbound))
 }
 ```
 
