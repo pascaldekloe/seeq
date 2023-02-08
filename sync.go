@@ -24,14 +24,13 @@ type QuerySet[AggregateSet any] struct {
 	LiveAt time.Time
 }
 
+var aggregateType = reflect.TypeOf(struct{ Aggregate[stream.Entry] }{}).Field(0).Type
+
 // aggregateSetFields returns the fields tagged as "aggregate".
 func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 	if k := setType.Kind(); k != reflect.Struct {
 		return nil, fmt.Errorf("aggregate set %s is a %s—not a struct", setType, k)
 	}
-
-	// only stream.Entry for now
-	aggType := reflect.TypeOf(Aggregate[stream.Entry](nil)).Elem()
 
 	fieldN := setType.NumField()
 	fields := make([]reflect.StructField, 0, fieldN)
@@ -50,8 +49,8 @@ func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 			return nil, fmt.Errorf("aggregate field %s from %s is not exported", field.Name, setType)
 		}
 
-		if !field.Type.Implements(aggType) {
-			return nil, fmt.Errorf("aggregate field %s from %s does not implement %s", field.Name, setType, aggType)
+		if !field.Type.Implements(aggregateType) {
+			return nil, fmt.Errorf("aggregate field %s from %s does not implement %s", field.Name, setType, aggregateType)
 		}
 
 		fields = append(fields, field)
