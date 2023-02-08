@@ -40,25 +40,25 @@ func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
 	}
 }
 
-// ChannelReader returns a reader which serves from channel input.
-func ChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
+// NewChannelReader returns a reader which serves from channel input.
+func NewChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
 	c := make(chan stream.Entry, bufN)
 	return &channelReader{c: c}, c
 }
 
-// FixedReader returns a reader which serves a fixed sequence.
-func FixedReader(entries ...stream.Entry) stream.Reader {
-	r, c := ChannelReader(len(entries))
-	for i := range entries {
-		c <- entries[i]
+// NewFixedReader returns a reader which serves a fixed queue.
+func NewFixedReader(queue ...stream.Entry) stream.Reader {
+	r, c := NewChannelReader(len(queue))
+	for i := range queue {
+		c <- queue[i]
 	}
 	return r
 }
 
-// ErrorReader returns a reader which replaces EOF with a custom error.
+// ErrorReader returns a reader which replaces EOF from r with err.
 func ErrorReader(r stream.Reader, err error) stream.Reader {
 	if err == nil {
-		panic("need error")
+		panic("nil error")
 	}
 	return &errorReader{r, err}
 }
@@ -70,17 +70,17 @@ type errorReader struct {
 
 // Read implements stream.Reader.
 func (r *errorReader) Read(basket []stream.Entry) (n int, err error) {
-	n, err = r.r.Read(basket)
+	n, err = verifiedRead(r.r, basket)
 	if err == io.EOF {
 		err = r.err
 	}
 	return
 }
 
-// DelayReader returns a reader which delays every read by a fixed duration.
+// DelayReader returns a reader which delays every read from r with d.
 func DelayReader(r stream.Reader, d time.Duration) stream.Reader {
 	if d <= 0 {
-		panic("need positive delay")
+		panic("no delay")
 	}
 	return &delayReader{r, d}
 }
@@ -93,27 +93,25 @@ type delayReader struct {
 // Read implements stream.Reader.
 func (r *delayReader) Read(basket []stream.Entry) (n int, err error) {
 	time.Sleep(r.d)
-	return r.r.Read(basket)
+	return verifiedRead(r.r, basket)
 }
 
-// DripNReader returns a reader which hits io.EOF every n entries, starting with
-// the first.
-func DripNReader(r stream.Reader, n int) stream.Reader {
-	if n <= 0 {
-		panic("need positive drip count")
-	}
-	return &dripReader{r: r, dripN: n, remainN: 0}
+// DripReader returns a reader which hits EOF every n entries from r, starting
+// with the first.
+func DripReader(r stream.Reader, n int) stream.Reader {
+	return &dripReader{r: r, everyN: n, remainN: 0}
 }
 
 type dripReader struct {
-	r              stream.Reader
-	dripN, remainN int
+	r       stream.Reader
+	everyN  int
+	remainN int
 }
 
 // Read implements stream.Reader.
 func (r *dripReader) Read(basket []stream.Entry) (n int, err error) {
-	if r.remainN == 0 {
-		r.remainN = r.dripN
+	if r.remainN <= 0 {
+		r.remainN = r.everyN
 		return 0, io.EOF
 	}
 
@@ -121,14 +119,23 @@ func (r *dripReader) Read(basket []stream.Entry) (n int, err error) {
 		basket = basket[:r.remainN]
 	}
 
-	n, err = r.r.Read(basket)
-	if n < 0 || n > len(basket) {
-		panic("read count out of bounds")
-	}
+	n, err = verifiedRead(r.r, basket)
 	r.remainN -= n
 	if err == nil && r.remainN == 0 {
 		err = io.EOF
-		r.remainN = r.dripN
+		r.remainN = r.everyN
+	}
+	return
+}
+
+// VerifiedRead includes interface constraints check with a Read.
+func verifiedRead(r stream.Reader, basket []stream.Entry) (n int, err error) {
+	n, err = r.Read(basket)
+	if n < 0 || n > len(basket) {
+		panic("read count out of bounds")
+	}
+	if n < len(basket) && err == nil {
+		panic("read less that basket without error")
 	}
 	return
 }
