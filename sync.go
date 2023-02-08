@@ -30,8 +30,8 @@ func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 		return nil, fmt.Errorf("aggregate set %s is a %s—not a struct", setType, k)
 	}
 
-	// support only InMemory for now
-	aggType := reflect.TypeOf(InMemory[stream.Entry](nil)).Elem()
+	// only stream.Entry for now
+	aggType := reflect.TypeOf(Aggregate[stream.Entry](nil)).Elem()
 
 	fieldN := setType.NumField()
 	fields := make([]reflect.StructField, 0, fieldN)
@@ -69,11 +69,12 @@ func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 // setup works well for states with fast snapshot handling [Dumper & Loader].
 //
 // The AggregateSet must be a struct with one or more of its fields tagged as
-// "aggregate". Each aggregate must implement InMemory.
+// "aggregate". Each field tagged as aggregate must implement the Aggregate
+// interface.
 type LightGroup[AggregateSet any] struct {
 	newSet func() (*AggregateSet, error) // constructor
 
-	// AggFields has one or more InMemory fields from AggregateSet
+	// AggFields has one or more Aggregate fields from AggregateSet
 	aggFields []reflect.StructField
 
 	// latest singleton, or nil initially
@@ -104,11 +105,11 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 }
 
 // Aggregates returns the aggregate values of a set struct.
-func (g *LightGroup[AggregateSet]) aggregates(set *AggregateSet) []InMemory[stream.Entry] {
+func (g *LightGroup[AggregateSet]) aggregates(set *AggregateSet) []Aggregate[stream.Entry] {
 	v := reflect.ValueOf(set).Elem()
-	aggs := make([]InMemory[stream.Entry], len(g.aggFields))
+	aggs := make([]Aggregate[stream.Entry], len(g.aggFields))
 	for i := range aggs {
-		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(InMemory[stream.Entry])
+		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(Aggregate[stream.Entry])
 	}
 	return aggs
 }
@@ -152,9 +153,7 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 		}
 
 		for _, agg := range aggs {
-			for i := 0; i < n; i++ {
-				agg.AddNext(buf[i])
-			}
+			agg.AddNext(buf[:n])
 		}
 		workingCopy.SeqNo += uint64(n)
 
@@ -191,7 +190,7 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 	}
 }
 
-func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], workingCopyAggs []InMemory[stream.Entry]) ([]InMemory[stream.Entry], error) {
+func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], workingCopyAggs []Aggregate[stream.Entry]) ([]Aggregate[stream.Entry], error) {
 	// new copy
 	cloneSet, err := g.newSet()
 	if err != nil {

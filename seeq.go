@@ -1,9 +1,4 @@
-// Package seeq implements state collection from streams into so-called
-// aggregates. This package distinguishes between aggregates that do use block
-// devices [Database] and those who don't [InMemory], as block devices may
-// encounter errors, and they generally require some sort of termination after
-// use. Implementations may define their own query interfaces as desired, which
-// is outside the scope of this library.
+// Package seeq implements state collection from streams.
 package seeq
 
 import (
@@ -11,31 +6,15 @@ import (
 	"io"
 )
 
-// InMemory aggregates build state from a stream of T—typically stream.Entry.
-// There is no error scenario without use of block devices. No shutdown needed
-// either. Malformed content should be reported only. The stream must continue
-// at all times.
-type InMemory[T any] interface {
-	// AddNext is invoked with each stream element in order of appearance
-	// starting with the first.
-	AddNext(T)
+// An Aggregate consumes a stream of T—typically stream.Entry—for one or more
+// specific queries.
+type Aggregate[T any] interface {
+	// AddNext consumes a stream in chronological order. Malformed content
+	// should be reported only. The stream must continue at all times.
+	AddNext(batch []T)
 
-	Dumper // produces a snapshot of an InMemory
-	Loader // resets an InMemory to a snapshot
-}
-
-// Database aggregates build state from a stream of T—typically stream.Entry.
-// Errors from AddNext are fatal to the aggregate. Malformed content should be
-// reported only. The stream must continue at all times.
-type Database[T any] interface {
-	// AddNext is invoked with each stream element in order of appearance
-	// starting with the first.
-	AddNext(batch []T) error
-
-	Shutdown() // frees any resources in use
-
-	Dumper // produces a snapshot of a Database
-	Loader // resets a Database to a snapshot
+	Dumper // produces a snapshot
+	Loader // resets to a snapshot
 }
 
 // A Dumper can produce snapshots of its state (for a Loader).
