@@ -6,6 +6,7 @@ The API enforces fool-proof architecture, with an eye for performance.
 This is free and unencumbered software released into the
 [public domain](https://creativecommons.org/publicdomain/zero/1.0).
 
+[![Go Doc](https://pkg.go.dev/badge/github.com/pascaldekloe/seeq.svg)](https://pkg.go.dev/github.com/pascaldekloe/seeq)
 [![Build](https://github.com/pascaldekloe/seeq/actions/workflows/go.yml/badge.svg)](https://github.com/pascaldekloe/seeq/actions/workflows/go.yml)
 
 
