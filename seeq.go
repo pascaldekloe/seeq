@@ -33,23 +33,25 @@ type Loader interface {
 
 // Clone copies the state from src into dest.
 func Clone(dest Loader, src Dumper) error {
-	return CloneWithSnapshot(dest, src, nil)
+	return cloneWithSnapshot(dest, src, nil)
 }
 
 // CloneWithSnapshot copies the state from src into dest with a copy of the
 // snapshot into w.
 func CloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
+	if w == nil {
+		panic("nil Writer")
+	}
+	return cloneWithSnapshot(dest, src, w)
+}
+
+func cloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
 	// write snapshot into pipe
 	go func() {
-		err := src.DumpTo(pw)
-		if err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
+		pw.CloseWithError(src.DumpTo(pw))
 	}()
 
 	var r io.Reader
@@ -59,19 +61,19 @@ func CloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
 		r = io.TeeReader(pr, w)
 	}
 
-	// Load receives errors from src and snapshot through the pipe
+	// load receives errors from src and w through the pipe
 	err := dest.LoadFrom(r)
 	if err != nil {
+		pw.Close() // abort dump if still active
 		return err
 	}
 
-	// Partial reads from a Loader are not permitted to prevent hard-to-find
-	// mistakes.
+	// partial snapshot reads not permitted to prevent mistakes
 	switch n, err := io.Copy(io.Discard, r); {
 	case err != nil:
 		return err
 	case n != 0:
-		return errors.New("pending snapshot data after load without error")
+		return errors.New("pending data after snapshot load")
 	}
 
 	return nil
