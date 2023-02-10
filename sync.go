@@ -17,7 +17,7 @@ import (
 // applied at some point in time. The AggregateSet is read-only—ready to serve
 // queries. No more updates shall be applied.
 type QuerySet[AggregateSet any] struct {
-	Set *AggregateSet // read-only
+	Aggs *AggregateSet // read-only
 	// The sequence number equals the amount of stream entries applied.
 	SeqNo uint64
 	// Live is defined as the latest EOF read from the input stream.
@@ -103,16 +103,6 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 	return &g, nil
 }
 
-// Aggregates returns the aggregate values of a set struct.
-func (g *LightGroup[AggregateSet]) aggregates(set *AggregateSet) []Aggregate[stream.Entry] {
-	v := reflect.ValueOf(set).Elem()
-	aggs := make([]Aggregate[stream.Entry], len(g.aggFields))
-	for i := range aggs {
-		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(Aggregate[stream.Entry])
-	}
-	return aggs
-}
-
 // AggregateLabel returns a descriptive name.
 func (g *LightGroup[AggregateSet]) aggregateLabel(field reflect.StructField) string {
 	setType := reflect.TypeOf((*AggregateSet)(nil)).Elem()
@@ -131,30 +121,29 @@ func (g *LightGroup[AggregateSet]) aggregateLabel(field reflect.StructField) str
 // SyncFrom applies events to the Aggregates until end-of-stream.
 func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 	// create a working copy which we feed from in
-	workingCopy := QuerySet[AggregateSet]{SeqNo: 0}
-	var err error
-	workingCopy.Set, err = g.newSet()
+	set, aggs, err := g.fork(0, nil)
 	if err != nil {
-		return fmt.Errorf("aggregate synchronization halt on initial instantiation: %w", err)
+		return err
 	}
-	aggs := g.aggregates(workingCopy.Set)
 
 	// once live the QuerySet is offered to release
 	var offerTimer *time.Timer // short-poll delay
 
+	var seqNo uint64
 	var buf [99]stream.Entry
 	for {
 		n, err := in.Read(buf[:])
 		// ⚠️ delayed error check
 
+		var liveAt time.Time
 		if err == io.EOF {
-			workingCopy.LiveAt = time.Now() // live moment
+			liveAt = time.Now()
 		}
 
 		for _, agg := range aggs {
 			agg.AddNext(buf[:n])
 		}
-		workingCopy.SeqNo += uint64(n)
+		seqNo += uint64(n)
 
 		switch err {
 		case nil:
@@ -174,63 +163,64 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 		}
 		select {
 		case <-offerTimer.C:
-			continue // check stream again
-		case g.release <- workingCopy:
+			break // no demand
+		case g.release <- QuerySet[AggregateSet]{Aggs: set, SeqNo: seqNo, LiveAt: liveAt}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}
-		}
-		// workingCopy.Set is read-only now
 
-		aggs, err = g.fork(&workingCopy, aggs)
-		if err != nil {
-			return err
+			set, aggs, err = g.fork(seqNo, aggs)
+			if err != nil {
+				return err
+			}
 		}
 	}
 }
 
-func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], workingCopyAggs []Aggregate[stream.Entry]) ([]Aggregate[stream.Entry], error) {
-	// new copy
-	cloneSet, err := g.newSet()
+func (g *LightGroup[AggregateSet]) fork(seqNo uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
+	set, err := g.newSet()
 	if err != nil {
-		return nil, fmt.Errorf("aggregate set synchronization halt on instation: %w", err)
+		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
 	}
-	cloneAggs := g.aggregates(cloneSet)
+
+	aggs := make([]Aggregate[stream.Entry], len(g.aggFields))
+	v := reflect.ValueOf(set).Elem()
+	for i := range aggs {
+		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(Aggregate[stream.Entry])
+	}
+
+	if len(old) != len(aggs) {
+		return set, aggs, nil
+	}
 
 	// copy snapshots of each aggregate
 	// buffer to preserve error order, if any
-	done := make(chan error, len(workingCopyAggs))
-	for i := range workingCopyAggs {
+	done := make(chan error, len(aggs))
+	for i := range aggs {
 		go func(i int) {
-			in, out := workingCopyAggs[i], cloneAggs[i]
-			aggLabel := g.aggregateLabel(g.aggFields[i])
-
 			// TODO(pascaldekloe): apply snapshot directory & expire previous
 			// The second resolution serves a flood protection.
-			snapshotName := aggLabel + "." + workingCopy.LiveAt.UTC().Format("2006-01-02T15:04:05Z")
+			snapshotName := fmt.Sprintf("%s-%d.snapshot", g.aggregateLabel(g.aggFields[i]), seqNo)
 			snapshotFile, err := os.OpenFile(snapshotName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o660)
-			switch {
-			case err == nil:
-				defer snapshotFile.Close()
-			case os.IsExist(err):
-				// already have a snapshot for this very second
-			default:
+			if err != nil {
 				// snapshots are an optional optimization
 				log.Print("continue without snapshot persistence: ", err)
+				done <- Clone(aggs[i], old[i])
+				return
 			}
+			defer snapshotFile.Close()
 
-			err = CloneWithSnapshot(out, in, snapshotFile)
+			err = CloneWithSnapshot(aggs[i], old[i], snapshotFile)
 			if err != nil {
 				done <- err
 				return
 			}
-
 			done <- snapshotFile.Sync()
 		}(i)
 	}
 
 	var errs []error
-	for range cloneAggs {
+	for range aggs {
 		err := <-done
 		if err != nil {
 			errs = append(errs, err)
@@ -239,29 +229,27 @@ func (g *LightGroup[AggregateSet]) fork(workingCopy *QuerySet[AggregateSet], wor
 
 	switch len(errs) {
 	case 0:
-		workingCopy.Set = cloneSet
-		return cloneAggs, nil
+		return set, aggs, nil
 	case 1:
-		return nil, errs[0]
-	default:
-		// try and dedupe
-		msgSet := make(map[string]struct{}, len(errs))
-		for _, err := range errs {
-			msgSet[err.Error()] = struct{}{}
-		}
-
-		firstMsg := errs[0].Error()
-		delete(msgSet, firstMsg)
-		if len(msgSet) == 0 {
-			return nil, errs[0]
-		}
-
-		others := make([]string, 0, len(msgSet))
-		for s := range msgSet {
-			others = append(others, s)
-		}
-		return nil, fmt.Errorf("%w; followed by %q", errs[0], others)
+		return nil, nil, errs[0]
 	}
+	// try and dedupe
+	msgSet := make(map[string]struct{}, len(errs))
+	for _, err := range errs {
+		msgSet[err.Error()] = struct{}{}
+	}
+
+	firstMsg := errs[0].Error()
+	delete(msgSet, firstMsg)
+	if len(msgSet) == 0 {
+		return nil, nil, errs[0]
+	}
+
+	others := make([]string, 0, len(msgSet))
+	for s := range msgSet {
+		others = append(others, s)
+	}
+	return nil, nil, fmt.Errorf("%w; followed by %q", errs[0], others)
 }
 
 // ErrLiveFuture denies freshness.
