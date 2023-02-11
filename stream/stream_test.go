@@ -10,11 +10,11 @@ import (
 func ExampleCursor() {
 	// demo input
 	r := streamtest.NewFixedReader(
-			stream.Entry{"text", []byte("Ⅰ")},
-			stream.Entry{"text", []byte("Ⅱ")},
-			stream.Entry{"text", []byte("Ⅲ")},
-			stream.Entry{"text", []byte("Ⅳ")},
-			stream.Entry{"text", []byte("Ⅴ")},
+		stream.Entry{"text", []byte("Ⅰ")},
+		stream.Entry{"text", []byte("Ⅱ")},
+		stream.Entry{"text", []byte("Ⅲ")},
+		stream.Entry{"text", []byte("Ⅳ")},
+		stream.Entry{"text", []byte("Ⅴ")},
 	)
 
 	// cursor setup
