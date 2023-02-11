@@ -83,11 +83,11 @@ contstuctor.
 ```go
 // RFCSeries demonstrates the grouping of five custom aggregates.
 type RFCSeries struct {
-	Statuses  *RFCStatusIndex `aggregate`
-	Reffs     *ReferenceGraph `aggregate`
-	Authors   *people.NameDB  `aggregate`
-	Chapters  ChapterRepo     `aggregate`
-	Abstracts *fulltext.Index `aggregate`
+	Statuses  *RFCStatusIndex `aggregate:"rfc-status"`
+	Refs      *ReferenceGraph `aggregate:"rfc-ref"`
+	Authors   *people.NameDB  `aggregate:"rfc-author"`
+	Chapters  ChapterRepo     `aggregate:"rfc-chapter"`
+	Abstracts *fulltext.Index `aggregate:"rfc-abstract"`
 }
 
 // NewRFCSeries returns a new set of empty aggregates ready for use.
@@ -109,7 +109,7 @@ field. A live copy is aquired with a freshness constraint.
 
 	log.Printf("all %T aggregates are at sequence № %d", q.Aggs, q.SeqNo)
 	log.Print("got %d RFC authors", q.Aggs.Authors.N)
-	log.Print("got %d references to RFC 2616", len(q.Aggs.Reffs.PerRFC[2616].Inbound))
+	log.Print("got %d references to RFC 2616", len(q.Aggs.Refs.PerRFC[2616].Inbound))
 }
 ```
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/pascaldekloe/seeq/stream"
@@ -25,14 +26,20 @@ type QuerySet[AggregateSet any] struct {
 
 var aggregateType = reflect.TypeOf(struct{ Aggregate[stream.Entry] }{}).Field(0).Type
 
-// aggregateSetFields returns the fields tagged as "aggregate".
-func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
+type aggregateField struct {
+	index   int    // struct position
+	aggName string // unique label
+}
+
+// AggregateSetFields reads fields tagged as aggregate.
+func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 	if k := setType.Kind(); k != reflect.Struct {
-		return nil, fmt.Errorf("aggregate set %s is a %s—not a struct", setType, k)
+		return nil, fmt.Errorf("aggregate set %s kind %s is not a struct", setType, k)
 	}
 
+	var found []aggregateField
+
 	fieldN := setType.NumField()
-	fields := make([]reflect.StructField, 0, fieldN)
 	for i := 0; i < fieldN; i++ {
 		field := setType.Field(i)
 
@@ -40,25 +47,38 @@ func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 		if !ok {
 			continue // not tagged as aggregate
 		}
-		if tag != "" {
-			return nil, fmt.Errorf("aggregate field %s from %s has unsupported tag %q", field.Name, setType, tag)
+
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" {
+			name = setType.String() + "." + field.Name
 		}
 
 		if !field.IsExported() {
-			return nil, fmt.Errorf("aggregate field %s from %s is not exported", field.Name, setType)
+			return nil, fmt.Errorf("aggregate set %s field %s is not exported", setType, field.Name)
 		}
-
 		if !field.Type.Implements(aggregateType) {
-			return nil, fmt.Errorf("aggregate field %s from %s does not implement %s", field.Name, setType, aggregateType)
+			return nil, fmt.Errorf("aggregate set %s field %s does not implement %s", setType, field.Name, aggregateType)
 		}
 
-		fields = append(fields, field)
+		found = append(found, aggregateField{i, name})
 	}
 
-	if len(fields) == 0 {
-		return nil, fmt.Errorf(`%s has no fields tagged as "aggregate"`, setType)
+	if len(found) == 0 {
+		return nil, fmt.Errorf("aggregate set %s has no aggregate tags", setType)
 	}
-	return fields, nil
+
+	// duplicate name check
+	indexPerName := make(map[string]int)
+	for _, f := range found {
+		previous, ok := indexPerName[f.aggName]
+		if ok {
+			return nil, fmt.Errorf("aggregate set %s has both field %s and field %s tagged as %q",
+				setType, setType.Field(previous).Name, setType.Field(f.index).Name, f.aggName)
+		}
+		indexPerName[f.aggName] = f.index
+	}
+
+	return found, nil
 }
 
 // LightGroup feeds a single AggregateSet sequentially. Whenever a Live method
@@ -72,8 +92,7 @@ func aggregateSetFields(setType reflect.Type) ([]reflect.StructField, error) {
 type LightGroup[AggregateSet any] struct {
 	newSet func() (*AggregateSet, error) // constructor
 
-	// AggFields has one or more Aggregate fields from AggregateSet
-	aggFields []reflect.StructField
+	setFields []aggregateField
 
 	// latest singleton, or nil initially
 	live chan *QuerySet[AggregateSet]
@@ -93,28 +112,13 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 
 	g := LightGroup[AggregateSet]{
 		newSet:    newSet,
-		aggFields: fields,
+		setFields: fields,
 		live:      make(chan *QuerySet[AggregateSet], 1),
 		release:   make(chan QuerySet[AggregateSet]),
 	}
 	g.live <- nil // initial placeholder
 
 	return &g, nil
-}
-
-// AggregateLabel returns a descriptive name.
-func (g *LightGroup[AggregateSet]) aggregateLabel(field reflect.StructField) string {
-	setType := reflect.TypeOf((*AggregateSet)(nil)).Elem()
-
-	t := field.Type
-	for {
-		switch t.Kind() {
-		case reflect.Interface, reflect.Pointer:
-			t = t.Elem() // resolve
-		default:
-			return fmt.Sprintf("%s@%s.%s", t, setType, field.Name)
-		}
-	}
 }
 
 // SyncFrom applies events to the Aggregates until end-of-stream.
@@ -164,10 +168,10 @@ func (g *LightGroup[AggregateSet]) fork(seqNo uint64, old []Aggregate[stream.Ent
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
 	}
 
-	aggs := make([]Aggregate[stream.Entry], len(g.aggFields))
+	aggs := make([]Aggregate[stream.Entry], len(g.setFields))
 	v := reflect.ValueOf(set).Elem()
 	for i := range aggs {
-		aggs[i] = v.FieldByIndex(g.aggFields[i].Index).Interface().(Aggregate[stream.Entry])
+		aggs[i] = v.Field(g.setFields[i].index).Interface().(Aggregate[stream.Entry])
 	}
 
 	if len(old) != len(aggs) {
@@ -180,9 +184,7 @@ func (g *LightGroup[AggregateSet]) fork(seqNo uint64, old []Aggregate[stream.Ent
 	for i := range aggs {
 		go func(i int) {
 			// TODO(pascaldekloe): apply snapshot directory & expire previous
-			// The second resolution serves a flood protection.
-			snapshotName := fmt.Sprintf("%s-%d.snapshot", g.aggregateLabel(g.aggFields[i]), seqNo)
-			snapshotFile, err := os.OpenFile(snapshotName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o660)
+			snapshotFile, err := os.OpenFile(g.setFields[i].aggName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o660)
 			if err != nil {
 				// snapshots are an optional optimization
 				log.Print("continue without snapshot persistence: ", err)
