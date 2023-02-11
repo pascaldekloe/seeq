@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"reflect"
@@ -119,8 +118,8 @@ func (g *LightGroup[AggregateSet]) aggregateLabel(field reflect.StructField) str
 }
 
 // SyncFrom applies events to the Aggregates until end-of-stream.
-func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
-	// create a working copy which we feed from in
+func (g *LightGroup[AggregateSet]) SyncFrom(c *stream.Cursor) error {
+	// instantiate working copy
 	set, aggs, err := g.fork(0, nil)
 	if err != nil {
 		return err
@@ -129,28 +128,9 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 	// once live the QuerySet is offered to release
 	var offerTimer *time.Timer // short-poll delay
 
-	var seqNo uint64
-	var buf [99]stream.Entry
 	for {
-		n, err := in.Read(buf[:])
-		// ⚠️ delayed error check
-
-		var liveAt time.Time
-		if err == io.EOF {
-			liveAt = time.Now()
-		}
-
-		for _, agg := range aggs {
-			agg.AddNext(buf[:n])
-		}
-		seqNo += uint64(n)
-
-		switch err {
-		case nil:
-			continue
-		case io.EOF:
-			break
-		default:
+		lastReadTime, err := FeedEach(c, aggs...)
+		if err != nil {
 			return fmt.Errorf("aggregate synchronization halt on input: %w", err)
 		}
 
@@ -164,12 +144,13 @@ func (g *LightGroup[AggregateSet]) SyncFrom(in stream.Reader) error {
 		select {
 		case <-offerTimer.C:
 			break // no demand
-		case g.release <- QuerySet[AggregateSet]{Aggs: set, SeqNo: seqNo, LiveAt: liveAt}:
+		case g.release <- QuerySet[AggregateSet]{Aggs: set, SeqNo: c.SeqNo, LiveAt: lastReadTime}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}
 
-			set, aggs, err = g.fork(seqNo, aggs)
+			// swap working copy
+			set, aggs, err = g.fork(c.SeqNo, aggs)
 			if err != nil {
 				return err
 			}

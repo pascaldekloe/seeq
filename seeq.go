@@ -4,6 +4,9 @@ package seeq
 import (
 	"errors"
 	"io"
+	"time"
+
+	"github.com/pascaldekloe/seeq/stream"
 )
 
 // An Aggregate consumes a stream of T—typically stream.Entry—for one or more
@@ -77,4 +80,30 @@ func cloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
 	}
 
 	return nil
+}
+
+// FeedEach sends batches from c to each Aggregate in order of their respective
+// argument position. The error comes from the stream.Reader with nil for EOF.
+func FeedEach(c *stream.Cursor, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+	for {
+		err := c.Next()
+		if err == io.EOF {
+			lastRead = time.Now()
+		}
+
+		if len(c.Batch) != 0 {
+			for i := range aggs {
+				aggs[i].AddNext(c.Batch)
+			}
+		}
+
+		switch err {
+		case nil:
+			continue
+		case io.EOF:
+			return lastRead, nil
+		default:
+			return lastRead, err
+		}
+	}
 }
