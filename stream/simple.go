@@ -3,7 +3,6 @@ package stream
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"io"
 	"math/bits"
 )
@@ -11,7 +10,7 @@ import (
 // SimpleReader decodes output from a SimpleWriter. Partial entries at the end
 // of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
 type SimpleReader struct {
-	R io.Reader // data source
+	R io.Reader // input
 
 	buf  []byte // read buffer
 	bufI int    // buffer position index
@@ -38,7 +37,7 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 
 	// need EOF even with a zero length basket or a full basket
 	for {
-		const headerLen = 8
+		const headerLen = 4
 
 		// buffer header
 		if r.bufN < headerLen {
@@ -87,11 +86,9 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 		}
 
 		// parse header
-		mediaTypeLen := int(uint(binary.BigEndian.Uint32(r.buf[r.bufI:])))
-		payloadLen := int(uint(binary.BigEndian.Uint32(r.buf[r.bufI+4:])))
-		if (mediaTypeLen|payloadLen)&^0x0FFF_FFFF != 0 {
-			return n, fmt.Errorf("malformed header %#x in simple stream", r.buf[r.bufI:r.bufI+headerLen])
-		}
+		header := uint(binary.BigEndian.Uint32(r.buf[r.bufI:]))
+		mediaTypeLen := int(header & 0xFF)
+		payloadLen := int(header >> 8)
 
 		// buffer remainder
 		if l := headerLen + mediaTypeLen + payloadLen; r.bufN < l {
