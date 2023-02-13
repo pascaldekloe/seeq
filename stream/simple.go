@@ -1,11 +1,39 @@
 package stream
 
 import (
+	"bufio"
 	"encoding/binary"
 	"errors"
 	"io"
 	"math/bits"
 )
+
+// TODO(pascaldekloe): Use writev(2) instead of a buffered writer. See issue #1.
+type simpleWriter struct {
+	W *bufio.Writer // output
+}
+
+// NewSimpleWriter encodes each Entry with a 32-bit header. The MediaType size
+// is limited to 255 bytes, and the payload size is limited to 16 MiB − 1 B..
+func NewSimpleWriter(w io.Writer) Writer {
+	return simpleWriter{bufio.NewWriter(w)}
+}
+
+// Write implement the Writer interface.
+func (w simpleWriter) Write(batch []Entry) error {
+	for i := range batch {
+		if len(batch[i].MediaType) > 255 || len(batch[i].Payload) > 0xFF_FFFF {
+			return ErrSizeMax
+		}
+		var header [4]byte
+		binary.BigEndian.PutUint32(header[:], uint32(len(batch[i].Payload)<<8|len(batch[i].MediaType)))
+		w.W.Write(header[:])
+		w.W.WriteString(batch[i].MediaType)
+		w.W.Write(batch[i].Payload)
+	}
+
+	return w.W.Flush()
+}
 
 // SimpleReader decodes output from a SimpleWriter. Partial entries at the end
 // of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
