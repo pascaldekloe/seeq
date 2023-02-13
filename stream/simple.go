@@ -3,7 +3,6 @@ package stream
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"io"
 	"math/bits"
 )
@@ -67,22 +66,32 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 	for {
 		const headerLen = 4
 
-		// buffer header
-		if r.bufN < headerLen {
-			// space check
-			switch {
-			case r.bufI >= bufSplit && len(r.buf)-r.bufI >= headerLen:
-				break // fits after bufSplit
+	BufferHeader:
+		for r.bufN < headerLen {
+			end := len(r.buf)
+			if r.bufI < bufSplit {
+				end = bufSplit
+			}
 
-			case r.bufI >= bufSplit && bufSplit >= headerLen:
-				// fits before bufSplit; transfer remainder if any
+			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:end], headerLen-r.bufN)
+			r.bufN += readN
+			switch err {
+			case nil:
+				break BufferHeader // got it
+			case io.ErrShortBuffer:
+				break
+			case io.ErrUnexpectedEOF:
+				return n, io.EOF // partial entry at end OK
+			default:
+				return n, err
+			}
+
+			// grow buffer
+			if r.bufI >= bufSplit && bufSplit >= headerLen {
+				// roll over and move remainder, if any
 				copy(r.buf[:r.bufN], r.buf[r.bufI:])
 				r.bufI = 0
-
-			case r.bufI < bufSplit && bufSplit-r.bufI >= headerLen:
-				break // fits before bufSplit
-
-			default:
+			} else {
 				// buffer utilized by basket[:n]
 				// assert len(basket) ≥ n > 0
 				est := len(r.buf) * len(basket) / n
@@ -90,22 +99,13 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 				grow := make([]byte, 1<<bits.Len(uint(est)))
 
 				// Reserve the consumed for a better
-				// re-estimate next time, if any.
+				// growth estimate next time, if any.
 				bufSplit = len(grow) - len(r.buf)
 
+				// transfer remainder, if any
 				copy(grow[:r.bufN], r.buf[r.bufI:])
 				r.buf = grow
 				r.bufI = 0
-			}
-
-			// read header or more
-			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:], headerLen-r.bufN)
-			r.bufN += readN
-			if err != nil {
-				if errors.Is(err, io.ErrUnexpectedEOF) {
-					err = io.EOF // partial entry at end OK
-				}
-				return n, err
 			}
 		}
 
@@ -118,22 +118,32 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 		mediaTypeLen := int(header & 0xFF)
 		payloadLen := int(header >> 8)
 
-		// buffer remainder
-		if l := headerLen + mediaTypeLen + payloadLen; r.bufN < l {
-			// space check
-			switch {
-			case r.bufI >= bufSplit && len(r.buf)-r.bufI >= l:
-				break // fits after bufSplit
+	BufferRemainder:
+		for l := headerLen + mediaTypeLen + payloadLen; r.bufN < l; {
+			end := len(r.buf)
+			if r.bufI < bufSplit {
+				end = bufSplit
+			}
 
-			case r.bufI >= bufSplit && bufSplit >= l:
-				// fits before bufSplit; transfer remainder if any
+			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:end], l-r.bufN)
+			r.bufN += readN
+			switch err {
+			case nil:
+				break BufferRemainder // got it
+			case io.ErrShortBuffer:
+				break
+			case io.ErrUnexpectedEOF:
+				return n, io.EOF // partial entry at end OK
+			default:
+				return n, err
+			}
+
+			// grow buffer
+			if r.bufI >= bufSplit && bufSplit >= l {
+				// roll over and move remainder, if any
 				copy(r.buf[:r.bufN], r.buf[r.bufI:])
 				r.bufI = 0
-
-			case r.bufI < bufSplit && bufSplit-r.bufI >= l:
-				break // fits before bufSplit
-
-			default:
+			} else {
 				// buffer utilized by basket[:n]
 				// assert len(basket) > n ≥ 0
 				est := (len(r.buf) + l) * len(basket) / (n + 1)
@@ -141,22 +151,13 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 				grow := make([]byte, 1<<bits.Len(uint(est)))
 
 				// Reserve the consumed for a better
-				// re-estimate next time, if any.
+				// growth estimate next time, if any.
 				bufSplit = len(grow) - len(r.buf)
 
+				// transfer remainder, if any
 				copy(grow[:r.bufN], r.buf[r.bufI:])
 				r.buf = grow
 				r.bufI = 0
-			}
-
-			// read entry or more
-			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:], l-r.bufN)
-			r.bufN += readN
-			if err != nil {
-				if errors.Is(err, io.ErrUnexpectedEOF) {
-					err = io.EOF // partial entry at end OK
-				}
-				return n, err
 			}
 		}
 
