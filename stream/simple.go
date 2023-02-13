@@ -9,7 +9,7 @@ import (
 
 // TODO(pascaldekloe): Use writev(2) instead of a buffered writer. See issue #1.
 type simpleWriter struct {
-	W *bufio.Writer // output
+	w *bufio.Writer // output
 }
 
 // NewSimpleWriter encodes each Entry with a 32-bit header. The MediaType size
@@ -26,18 +26,16 @@ func (w simpleWriter) Write(batch []Entry) error {
 		}
 		var header [4]byte
 		binary.BigEndian.PutUint32(header[:], uint32(len(batch[i].Payload)<<8|len(batch[i].MediaType)))
-		w.W.Write(header[:])
-		w.W.WriteString(batch[i].MediaType)
-		w.W.Write(batch[i].Payload)
+		w.w.Write(header[:])
+		w.w.WriteString(batch[i].MediaType)
+		w.w.Write(batch[i].Payload)
 	}
 
-	return w.W.Flush()
+	return w.w.Flush()
 }
 
-// SimpleReader decodes output from a SimpleWriter. Partial entries at the end
-// of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
-type SimpleReader struct {
-	R io.Reader // input
+type simpleReader struct {
+	r io.Reader // input
 
 	buf  []byte // read buffer
 	bufI int    // buffer position index
@@ -47,17 +45,19 @@ type SimpleReader struct {
 	mediaTypes map[string]string
 }
 
+// NewSimpleReader decodes output from a SimpleWriter. Partial entries at the
+// end of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
+func NewSimpleReader(r io.Reader) Reader {
+	return &simpleReader{r: r, buf: make([]byte, 512)}
+}
+
 // Read implements the Reader interface.
-func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
+func (r *simpleReader) Read(basket []Entry) (n int, err error) {
 	var bufSplit int // circular buffer appliance
-	switch {
-	case r.buf == nil:
-		// first use
-		r.buf = make([]byte, 512)
-	case r.bufN == 0:
+	if r.bufN == 0 {
 		// empty buffer
 		r.bufI = 0
-	default:
+	} else {
 		// pending data
 		bufSplit = r.bufI
 	}
@@ -73,7 +73,7 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 				end = bufSplit
 			}
 
-			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:end], headerLen-r.bufN)
+			readN, err := io.ReadAtLeast(r.r, r.buf[r.bufI+r.bufN:end], headerLen-r.bufN)
 			r.bufN += readN
 			switch err {
 			case nil:
@@ -125,7 +125,7 @@ func (r *SimpleReader) Read(basket []Entry) (n int, err error) {
 				end = bufSplit
 			}
 
-			readN, err := io.ReadAtLeast(r.R, r.buf[r.bufI+r.bufN:end], l-r.bufN)
+			readN, err := io.ReadAtLeast(r.r, r.buf[r.bufI+r.bufN:end], l-r.bufN)
 			r.bufN += readN
 			switch err {
 			case nil:
