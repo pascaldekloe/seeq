@@ -1,4 +1,5 @@
-// Package snapshot provides aggregate state persistence.
+// Package snapshot provides aggregate state persistence. Serials are identified
+// by the aggregate name and the position of the input stream.
 package snapshot
 
 import (
@@ -10,7 +11,8 @@ import (
 	"strconv"
 )
 
-// Production must end with either a Close or an Abort.
+// Production must end with either a Commit or an Abort. Write never returns an
+// error. Write errors are delayed to Commit or Abort instead.
 type Production interface {
 	io.Writer      // appends
 	Commit() error // applies
@@ -19,7 +21,9 @@ type Production interface {
 
 // Archive manages a snapshot collection.
 type Archive interface {
+	// Open fetches a serial, with fs.ErrNotExist on absense.
 	Open(name string, seqNo uint64) (io.ReadCloser, error)
+	// Make persists a serial. It may overwrite an existing one.
 	Make(name string, seqNo uint64) (Production, error)
 
 	// History lists each sequence number available in ascending order.
@@ -47,43 +51,55 @@ func (dir fileDir) Make(name string, seqNo uint64) (Production, error) {
 	if err != nil {
 		return nil, err
 	}
-	return fileProduction{f}, nil
+	return fileProduction{f: f}, nil
 }
 
 type fileProduction struct {
-	*os.File
+	f   *os.File
+	err error
 }
 
 // Write implements the io.Writer interface.
 func (p fileProduction) Write(bytes []byte) (n int, err error) {
-	return p.File.Write(bytes)
-}
-
-// WriteString adds the io.StringWriter optimization.
-func (p fileProduction) WriteString(s string) (n int, err error) {
-	return p.File.WriteString(s)
-}
-
-// ReadFrom adds the io.ReaderFrom optimization.
-func (p fileProduction) ReadFrom(r io.Reader) (n int64, err error) {
-	return p.File.ReadFrom(r)
+	if p.err == nil {
+		_, p.err = p.f.Write(bytes)
+	}
+	return len(bytes), nil
 }
 
 // Commit implements the Production interface.
 func (p fileProduction) Commit() error {
-	defer p.File.Close()
-	err := p.File.Sync()
-	if err != nil {
-		return err
+	var syncErr error
+	if p.err == nil {
+		syncErr = p.f.Sync()
 	}
-	name := p.File.Name()
+
+	name := p.f.Name()
+	// don't care about errors after fsync(2)
+	p.f.Close()
+
+	if p.err != nil {
+		// leave .spool file
+		return p.err
+	}
+	if syncErr != nil {
+		// leave .spool file
+		return syncErr
+	}
+
+	// swap .spool suffix
 	return os.Rename(name, name[:len(name)-6]+".snapshot")
 }
 
 // Abort implements the Production interface.
 func (p fileProduction) Abort() error {
-	defer p.File.Close()
-	return os.Remove(p.File.Name())
+	name := p.f.Name()
+	p.f.Close()
+	removeErr := os.Remove(name)
+	if p.err != nil {
+		return p.err
+	}
+	return removeErr
 }
 
 func (dir fileDir) History(name string) ([]uint64, error) {
