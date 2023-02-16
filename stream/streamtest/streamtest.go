@@ -35,7 +35,7 @@ func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
 			return n, nil
 		}
 
-		basket[n] = <-r.c
+		basket[n] = stream.DeepCopy(<-r.c)[0]
 		n++
 	}
 }
@@ -49,7 +49,7 @@ func NewChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
 // NewFixedReader returns a reader which serves a fixed queue.
 func NewFixedReader(queue ...stream.Entry) stream.Reader {
 	r, c := NewChannelReader(len(queue))
-	for i := range queue {
+	for i := range stream.DeepCopy(queue...) {
 		c <- queue[i]
 	}
 	return r
