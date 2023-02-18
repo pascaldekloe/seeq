@@ -199,7 +199,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 		}
 		if len(files) == 0 {
 			// fresh start
-			f, err := os.OpenFile(roll.repo.file(roll.name, 0), os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 640)
+			f, err := os.OpenFile(roll.repo.file(roll.name, 0), os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 0o640)
 			if err != nil {
 				return err
 			}

@@ -6,11 +6,51 @@ import (
 	"errors"
 	"io"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
+
+// VerifyContent verifies that the stream contains each Entry in argument order,
+// and nothing more.
+func VerifyContent(t *testing.T, r stream.Reader, entries ...stream.Entry) (ok bool) {
+	t.Helper()
+
+	bucket := make([]stream.Entry, len(entries)+1)
+	n, err := r.Read(bucket)
+	switch err {
+	case nil, io.EOF:
+		if n != len(entries) {
+			t.Errorf("stream read %d entries, want %d", n, len(entries))
+		}
+	default:
+		t.Error("stream read error:", err)
+		ok = false
+	}
+
+	if n > len(entries) {
+		n = len(entries)
+	}
+	for i := 0; i < n; i++ {
+		got, want := bucket[i], entries[i]
+
+		switch {
+		case got.MediaType == want.MediaType && string(got.Payload) == string(want.Payload):
+			continue
+
+		case want.MediaType == "text", strings.HasPrefix(want.MediaType, "text/"):
+			t.Errorf("stream entry № %d got content %q payload %q, want content %q payload %q", i+1, got.MediaType, got.Payload, want.MediaType, want.Payload)
+		default:
+			t.Errorf("stream entry № %d got content %q payload %#x, want content %q payload %#x", i+1, got.MediaType, got.Payload, want.MediaType, want.Payload)
+		}
+		ok = false
+	}
+
+	return ok
+}
 
 type channelReader struct {
 	c <-chan stream.Entry
@@ -138,4 +178,25 @@ func verifiedRead(r stream.Reader, basket []stream.Entry) (n int, err error) {
 		panic("read less that basket without error")
 	}
 	return
+}
+
+// NewRepoWith populates a repository for testing. The files are automatically
+// removed when the test and all its subtests complete.
+func NewRepoWith(t testing.TB, name string, entries ...stream.Entry) stream.Repo {
+	t.Helper()
+
+	repo := stream.RollingFiles{
+		Dir:    t.TempDir(),
+		ChunkN: 5,
+	}
+
+	w := repo.AppendTo(name)
+	if err := w.Write(entries); err != nil {
+		t.Errorf("write to %q got error: %s", name, err)
+	}
+	if err := w.Close(); err != nil {
+		t.Errorf("writer close of %q got error: %s", name, err)
+	}
+
+	return &repo
 }
