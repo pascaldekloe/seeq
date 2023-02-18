@@ -3,12 +3,45 @@ package stream_test
 import (
 	"bytes"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"testing/iotest"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
+
+func TestSimpleWriterFile(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "simplef.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	w := stream.NewSimpleWriter(f)
+	err = w.Write([]stream.Entry{
+		{},
+		{"text", nil},
+		{"", []byte{'A'}},
+		{"text", []byte{'A', 'B'}},
+	})
+	if err != nil {
+		t.Error("write error:", err)
+	}
+
+	bytes, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "\x00\x00\x00\x00" +
+		"\x00\x00\x00\x04text" +
+		"\x00\x00\x01\x00A" +
+		"\x00\x00\x02\x04textAB"
+	if string(bytes) != want {
+		t.Errorf("got file content: %q\nwant file content: %q", bytes, want)
+	}
+}
 
 func TestSimpleReader(t *testing.T) {
 	assertEntry := func(t *testing.T, buf []stream.Entry, i int, wantMediaType, wantPayload string) {

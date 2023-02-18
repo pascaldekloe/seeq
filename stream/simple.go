@@ -4,22 +4,28 @@ import (
 	"bufio"
 	"encoding/binary"
 	"io"
+	"syscall"
 	"math/bits"
+	"os"
+	"unsafe"
 )
 
-// TODO(pascaldekloe): Use writev(2) instead of a buffered writer. See issue #1.
-type simpleWriter struct {
+type simpleBufWriter struct {
 	w *bufio.Writer // output
 }
 
 // NewSimpleWriter encodes each Entry with a 32-bit header. The MediaType size
 // is limited to 255 bytes, and the payload size is limited to 16 MiB − 1 B..
 func NewSimpleWriter(w io.Writer) Writer {
-	return simpleWriter{bufio.NewWriter(w)}
+	f, ok := w.(*os.File)
+	if ok {
+		return simpleFDWriter{fd: f.Fd()}
+	}
+	return simpleBufWriter{bufio.NewWriter(w)}
 }
 
-// Write implement the Writer interface.
-func (w simpleWriter) Write(batch []Entry) error {
+// Write implements the Writer interface.
+func (w simpleBufWriter) Write(batch []Entry) error {
 	for i := range batch {
 		if len(batch[i].MediaType) > 255 || len(batch[i].Payload) > 0xFF_FFFF {
 			return ErrSizeMax
@@ -32,6 +38,45 @@ func (w simpleWriter) Write(batch []Entry) error {
 	}
 
 	return w.w.Flush()
+}
+
+type simpleFDWriter struct {
+	fd uintptr
+	headers [][4]byte // reusable buffer
+	vectors []syscall.Iovec
+}
+
+// Write implements the Writer interface.
+func (w simpleFDWriter) Write(batch []Entry) error {
+	if len(batch) > cap(w.headers) {
+		w.headers = make([][4]byte, len(batch))
+		w.vectors = make([]syscall.Iovec, 0, len(batch)*3)
+	} else {
+		w.headers = w.headers[:len(batch)]
+		w.vectors = w.vectors[:0]
+	}
+
+	for i := range batch {
+		if len(batch[i].MediaType) > 255 || len(batch[i].Payload) > 0xFF_FFFF {
+			return ErrSizeMax
+		}
+		binary.BigEndian.PutUint32(w.headers[i][:], uint32(len(batch[i].Payload)<<8|len(batch[i].MediaType)))
+		w.vectors = append(w.vectors, syscall.Iovec{&w.headers[i][0], 4})
+		if batch[i].MediaType != "" {
+			// go won't allow address of string content
+			b := (*[]byte)(unsafe.Pointer(&batch[i].MediaType))
+			w.vectors = append(w.vectors, syscall.Iovec{&(*b)[0], uint64(uint(len(batch[i].MediaType)))})
+		}
+		if len(batch[i].Payload) != 0 {
+			w.vectors = append(w.vectors, syscall.Iovec{&batch[i].Payload[0], uint64(uint(len(batch[i].Payload)))})
+		}
+	}
+
+	_, _, errno := syscall.Syscall(syscall.SYS_WRITEV, w.fd, uintptr(unsafe.Pointer(&w.vectors[0])), uintptr(len(w.vectors)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 type simpleReader struct {
