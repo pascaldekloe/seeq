@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/pascaldekloe/seeq/snapshot"
 	"github.com/pascaldekloe/seeq/stream"
 )
 
@@ -98,6 +98,8 @@ type LightGroup[AggregateSet any] struct {
 	live chan *QuerySet[AggregateSet]
 	// working copy handover
 	release chan QuerySet[AggregateSet]
+
+	Snapshots snapshot.Archive // optional
 }
 
 // NewLightGroup returns a new installation that must be fed with the SyncFrom
@@ -121,19 +123,22 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 	return &g, nil
 }
 
-// SyncFrom applies events to the Aggregates until end-of-stream.
-func (g *LightGroup[AggregateSet]) SyncFrom(c *stream.Cursor) error {
+// SyncFrom a repository streamName until failure.
+func (g *LightGroup[AggregateSet]) SyncFrom(streams stream.Repo, streamName string) error {
 	// instantiate working copy
 	set, aggs, err := g.fork(0, nil)
 	if err != nil {
 		return err
 	}
 
+	r, err := g.initStream(streams, streamName, aggs)
+	defer r.Close()
+
 	// once live the QuerySet is offered to release
 	var offerTimer *time.Timer // short-poll delay
-
+	buf := make([]stream.Entry, 99)
 	for {
-		lastReadTime, err := FeedEach(c, aggs...)
+		lastReadTime, err := FeedEach(r, buf, aggs...)
 		if err != nil {
 			return fmt.Errorf("aggregate synchronization halt on input: %w", err)
 		}
@@ -148,13 +153,13 @@ func (g *LightGroup[AggregateSet]) SyncFrom(c *stream.Cursor) error {
 		select {
 		case <-offerTimer.C:
 			break // no demand
-		case g.release <- QuerySet[AggregateSet]{Aggs: set, SeqNo: c.SeqNo, LiveAt: lastReadTime}:
+		case g.release <- QuerySet[AggregateSet]{Aggs: set, SeqNo: r.Offset(), LiveAt: lastReadTime}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}
 
 			// swap working copy
-			set, aggs, err = g.fork(c.SeqNo, aggs)
+			set, aggs, err = g.fork(r.Offset(), aggs)
 			if err != nil {
 				return err
 			}
@@ -162,7 +167,53 @@ func (g *LightGroup[AggregateSet]) SyncFrom(c *stream.Cursor) error {
 	}
 }
 
-func (g *LightGroup[AggregateSet]) fork(seqNo uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
+func (g *LightGroup[AggregateSet]) initStream(streams stream.Repo, streamName string, aggs []Aggregate[stream.Entry]) (stream.ReadCloser, error) {
+	if g.Snapshots == nil {
+		return streams.ReadAt(streamName, 0), nil
+	}
+
+	aggNames := make([]string, 0, len(g.setFields))
+	for _, f := range g.setFields {
+		aggNames = append(aggNames, f.aggName)
+	}
+	offset, err := snapshot.LastCommon(g.Snapshots, aggNames...)
+	if err != nil {
+		return nil, err
+	}
+	if offset == 0 {
+		return streams.ReadAt(streamName, 0), nil
+	}
+
+	errs := make(chan error, len(aggs))
+	for i := range aggs {
+		go func(i int) {
+			r, err := g.Snapshots.Open(aggNames[i], offset)
+			if err != nil {
+				errs <- err
+				return
+			}
+			err = aggs[i].LoadFrom(r)
+			r.Close()
+			errs <- err
+		}(i)
+	}
+
+	var errN int
+	for range aggs {
+		err := <-errs
+		if err != nil {
+			errN++
+			log.Print(err)
+		}
+	}
+	if errN != 0 {
+		return nil, fmt.Errorf("aggregate group synchronisation halt on %d snapshot recovery error(s)", errN)
+	}
+
+	return streams.ReadAt(streamName, offset), nil
+}
+
+func (g *LightGroup[AggregateSet]) fork(offset uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
 	set, err := g.newSet()
 	if err != nil {
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
@@ -183,22 +234,32 @@ func (g *LightGroup[AggregateSet]) fork(seqNo uint64, old []Aggregate[stream.Ent
 	done := make(chan error, len(aggs))
 	for i := range aggs {
 		go func(i int) {
-			// TODO(pascaldekloe): apply snapshot directory & expire previous
-			snapshotFile, err := os.OpenFile(g.setFields[i].aggName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o660)
-			if err != nil {
-				// snapshots are an optional optimization
-				log.Print("continue without snapshot persistence: ", err)
-				done <- Clone(aggs[i], old[i])
-				return
+			var prod snapshot.Production
+			if g.Snapshots != nil {
+				var err error
+				prod, err = g.Snapshots.Make(g.setFields[i].aggName, offset)
+				if err != nil {
+					log.Print("snapshot omitted: ", err)
+				}
 			}
-			defer snapshotFile.Close()
 
-			err = CloneWithSnapshot(aggs[i], old[i], snapshotFile)
-			if err != nil {
-				done <- err
-				return
+			err := Clone(aggs[i], old[i], prod)
+			done <- err
+
+			switch {
+			case prod == nil:
+				break
+			case err == nil:
+				err := prod.Commit()
+				if err != nil {
+					log.Print("snapshot loss: ", err)
+				}
+			default:
+				err := prod.Abort()
+				if err != nil {
+					log.Print("snapshot abandon: ", err)
+				}
 			}
-			done <- snapshotFile.Sync()
 		}(i)
 	}
 

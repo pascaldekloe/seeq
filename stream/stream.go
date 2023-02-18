@@ -58,23 +58,6 @@ type Writer interface {
 	Write(batch []Entry) error
 }
 
-// Cursor operates on a reusable buffer. It keeps track of the position with its
-// sequence number.
-type Cursor struct {
-	R     Reader  // input
-	Batch []Entry // read buffer
-	SeqNo uint64  // Entry count
-}
-
-// Next resets Batch to the next in line. The amount is limited by the slice
-// capacity. SeqNo gets updated accordingly.
-func (c *Cursor) Next() error {
-	n, err := c.R.Read(c.Batch[:cap(c.Batch)])
-	c.Batch = c.Batch[:n]
-	c.SeqNo += uint64(uint(n))
-	return err
-}
-
 // A ReadCloser requires cleanup after use.
 type ReadCloser interface {
 	Reader

@@ -3,9 +3,11 @@ package seeq
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
+	"github.com/pascaldekloe/seeq/snapshot"
 	"github.com/pascaldekloe/seeq/stream"
 )
 
@@ -34,21 +36,9 @@ type Loader interface {
 	LoadFrom(io.Reader) error
 }
 
-// Clone copies the state from src into dest.
-func Clone(dest Loader, src Dumper) error {
-	return cloneWithSnapshot(dest, src, nil)
-}
-
-// CloneWithSnapshot copies the state from src into dest with a copy of the
-// snapshot into w.
-func CloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
-	if w == nil {
-		panic("nil Writer")
-	}
-	return cloneWithSnapshot(dest, src, w)
-}
-
-func cloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
+// Clone copies the state from src into dest. Snapshot Production is optional.
+// Clone does not Commit nor Abort the Production.
+func Clone(dest Loader, src Dumper, p snapshot.Production) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -58,25 +48,24 @@ func cloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
 	}()
 
 	var r io.Reader
-	if w == nil {
+	if p == nil {
 		r = pr
 	} else {
-		r = io.TeeReader(pr, w)
+		r = io.TeeReader(pr, p)
 	}
 
 	// load receives errors from src and w through the pipe
 	err := dest.LoadFrom(r)
 	if err != nil {
-		pw.Close() // abort dump if still active
 		return err
 	}
 
 	// partial snapshot reads not permitted to prevent mistakes
 	switch n, err := io.Copy(io.Discard, r); {
 	case err != nil:
-		return err
+		return fmt.Errorf("aggregate %T snapshot dump after load: %w", src, err)
 	case n != 0:
-		return errors.New("pending data after snapshot load")
+		return fmt.Errorf("aggregate %T left %d bytes after snapshot load", dest, n)
 	}
 
 	return nil
@@ -84,16 +73,20 @@ func cloneWithSnapshot(dest Loader, src Dumper, w io.Writer) error {
 
 // FeedEach sends batches from c to each Aggregate in order of their respective
 // argument position. The error comes from the stream.Reader with nil for EOF.
-func FeedEach(c *stream.Cursor, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+func FeedEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+	if len(buf) == 0 {
+		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
+	}
+
 	for {
-		err := c.Next()
+		n, err := r.Read(buf)
 		if err == io.EOF {
 			lastRead = time.Now()
 		}
 
-		if len(c.Batch) != 0 {
+		if n > 0 {
 			for i := range aggs {
-				aggs[i].AddNext(c.Batch)
+				aggs[i].AddNext(buf[:n])
 			}
 		}
 
