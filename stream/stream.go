@@ -45,6 +45,10 @@ type Reader interface {
 	// ⚠️ Clients may not retain Payload from basket[:n]. The bytes stop
 	// being valid at the next read due to possible buffer reuse.
 	Read(basket []Entry) (n int, err error)
+
+	// Offset returns the number of entries passed since the very begining
+	// of the stream.
+	Offset() uint64
 }
 
 // Writer appends stream content.

@@ -94,7 +94,7 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 
 		i := sort.Search(len(offsets), func(i int) bool { return offsets[i] >= roll.skipN })
 		if i >= len(files) {
-			return 0, fmt.Errorf("sequence number %d no longer available; archive starts at %d now", roll.skipN+1, offsets[0]+1)
+			return 0, fmt.Errorf("stream offset %d no longer available; archive starts at %d now", roll.skipN, offsets[0])
 		}
 
 		f, err := os.Open(files[i])
@@ -102,8 +102,7 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 			return 0, err
 		}
 		roll.file = f
-		roll.dec = NewSimpleReader(f)
-		roll.seqNo = offsets[i]
+		roll.dec = NewSimpleReader(f, offsets[i])
 		roll.skipN -= offsets[i]
 	}
 
@@ -116,7 +115,6 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 		}
 
 		n, err := roll.dec.Read(discard)
-		roll.seqNo += uint64(uint(n))
 		roll.skipN -= uint64(uint(n))
 		switch err {
 		case nil:
@@ -129,11 +127,11 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 	}
 
 	n, err = roll.dec.Read(basket)
-	roll.seqNo += uint64(uint(n))
 	for err == io.EOF {
 		// see if there's a follow-up file
+		offset := roll.dec.Offset()
 		var f *os.File
-		f, err = os.Open(roll.repo.file(roll.name, roll.seqNo))
+		f, err = os.Open(roll.repo.file(roll.name, offset))
 		if err != nil {
 			if os.IsNotExist(err) {
 				return n, io.EOF
@@ -142,15 +140,23 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 		}
 		roll.file.Close() // close previous
 		roll.file = f     // switch to next
-		roll.dec = NewSimpleReader(f)
+		roll.dec = NewSimpleReader(f, offset)
 
 		var nn int
 		nn, err = roll.dec.Read(basket[n:])
-		roll.seqNo += uint64(uint(nn))
 		n += nn
 	}
 
 	return n, err
+}
+
+// Offset implements the Reader interface.
+func (roll *rollingReader) Offset() uint64 {
+	// lazy init
+	if roll.file == nil {
+		return roll.skipN
+	}
+	return roll.dec.Offset()
 }
 
 // WriteLock protects against multiple writers on the same stream.

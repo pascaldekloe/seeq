@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"encoding/binary"
 	"io"
-	"syscall"
 	"math/bits"
 	"os"
+	"syscall"
 	"unsafe"
 )
 
@@ -41,7 +41,7 @@ func (w simpleBufWriter) Write(batch []Entry) error {
 }
 
 type simpleFDWriter struct {
-	fd uintptr
+	fd      uintptr
 	headers [][4]byte // reusable buffer
 	vectors []syscall.Iovec
 }
@@ -80,7 +80,8 @@ func (w simpleFDWriter) Write(batch []Entry) error {
 }
 
 type simpleReader struct {
-	r io.Reader // input
+	r      io.Reader // input
+	offset uint64    // position
 
 	buf  []byte // read buffer
 	bufI int    // buffer position index
@@ -92,12 +93,20 @@ type simpleReader struct {
 
 // NewSimpleReader decodes output from a SimpleWriter. Partial entries at the
 // end of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
-func NewSimpleReader(r io.Reader) Reader {
-	return &simpleReader{r: r, buf: make([]byte, 512)}
+func NewSimpleReader(r io.Reader, offset uint64) Reader {
+	return &simpleReader{
+		r:      r,
+		offset: offset,
+		buf:    make([]byte, 512),
+	}
 }
 
 // Read implements the Reader interface.
 func (r *simpleReader) Read(basket []Entry) (n int, err error) {
+	defer func() {
+		r.offset += uint64(uint(n))
+	}()
+
 	var bufSplit int // circular buffer appliance
 	if r.bufN == 0 {
 		// empty buffer
@@ -230,3 +239,6 @@ func (r *simpleReader) Read(basket []Entry) (n int, err error) {
 		n++
 	}
 }
+
+// Offset implements the Reader interface.
+func (r *simpleReader) Offset() uint64 { return r.offset }

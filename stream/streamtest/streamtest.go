@@ -55,12 +55,18 @@ func VerifyContent(t *testing.T, r stream.Reader, entries ...stream.Entry) (ok b
 type channelReader struct {
 	c <-chan stream.Entry
 
+	offset uint64
+
 	// concurrency detection
 	goroutineID atomic.Pointer[string]
 }
 
-// Read implements stream.Reader.
+// Read implements the stream.Reader interface.
 func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
+	defer func() {
+		r.offset += uint64(uint(n))
+	}()
+
 	goroutineID := string(bytes.Fields(debug.Stack())[1])
 	previous := r.goroutineID.Swap(&goroutineID)
 	if previous != nil && *previous != goroutineID {
@@ -79,6 +85,9 @@ func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
 		n++
 	}
 }
+
+// Offset implements the stream.Reader interface.
+func (r *channelReader) Offset() uint64 { return r.offset }
 
 // NewChannelReader returns a reader which serves from channel input.
 func NewChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
@@ -108,7 +117,7 @@ type errorReader struct {
 	err error
 }
 
-// Read implements stream.Reader.
+// Read implements the stream.Reader interface.
 func (r *errorReader) Read(basket []stream.Entry) (n int, err error) {
 	n, err = verifiedRead(r.r, basket)
 	if err == io.EOF {
@@ -116,6 +125,9 @@ func (r *errorReader) Read(basket []stream.Entry) (n int, err error) {
 	}
 	return
 }
+
+// Offset implements the stream.Reader interface.
+func (r *errorReader) Offset() uint64 { return r.r.Offset() }
 
 // DelayReader returns a reader which delays every read from r with d.
 func DelayReader(r stream.Reader, d time.Duration) stream.Reader {
@@ -130,11 +142,14 @@ type delayReader struct {
 	d time.Duration
 }
 
-// Read implements stream.Reader.
+// Read implements the stream.Reader interface.
 func (r *delayReader) Read(basket []stream.Entry) (n int, err error) {
 	time.Sleep(r.d)
 	return verifiedRead(r.r, basket)
 }
+
+// Offset implements the stream.Reader interface.
+func (r *delayReader) Offset() uint64 { return r.r.Offset() }
 
 // DripReader returns a reader which hits EOF every n entries from r, starting
 // with the first.
@@ -148,7 +163,7 @@ type dripReader struct {
 	remainN int
 }
 
-// Read implements stream.Reader.
+// Read implements the stream.Reader interface.
 func (r *dripReader) Read(basket []stream.Entry) (n int, err error) {
 	if r.remainN <= 0 {
 		r.remainN = r.everyN
@@ -167,6 +182,9 @@ func (r *dripReader) Read(basket []stream.Entry) (n int, err error) {
 	}
 	return
 }
+
+// Offset implements the stream.Reader interface.
+func (r *dripReader) Offset() uint64 { return r.r.Offset() }
 
 // VerifiedRead includes interface constraints check with a Read.
 func verifiedRead(r stream.Reader, basket []stream.Entry) (n int, err error) {
