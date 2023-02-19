@@ -10,10 +10,6 @@ import (
 	"unsafe"
 )
 
-type simpleBufWriter struct {
-	w *bufio.Writer // output
-}
-
 // NewSimpleWriter encodes each Entry with a 32-bit header. The MediaType size
 // is limited to 255 bytes, and the payload size is limited to 16 MiB − 1 B..
 func NewSimpleWriter(w io.Writer) Writer {
@@ -22,6 +18,10 @@ func NewSimpleWriter(w io.Writer) Writer {
 		return simpleFDWriter{fd: f.Fd()}
 	}
 	return simpleBufWriter{bufio.NewWriter(w)}
+}
+
+type simpleBufWriter struct {
+	w *bufio.Writer // output
 }
 
 // Write implements the Writer interface.
@@ -72,10 +72,21 @@ func (w simpleFDWriter) Write(batch []Entry) error {
 		}
 	}
 
-	_, _, errno := syscall.Syscall(syscall.SYS_WRITEV, w.fd, uintptr(unsafe.Pointer(&w.vectors[0])), uintptr(len(w.vectors)))
-	if errno != 0 {
-		return errno
+	// IOV_MAX from <limits.h> unavailable
+	const max = 1024
+
+	for offset := 0; offset < len(w.vectors); offset += max {
+		n := len(w.vectors) - offset
+		if n > max {
+			n = max
+		}
+
+		_, _, errno := syscall.Syscall(syscall.SYS_WRITEV, w.fd, uintptr(unsafe.Pointer(&w.vectors[offset])), uintptr(n))
+		if errno != 0 {
+			return errno
+		}
 	}
+
 	return nil
 }
 
