@@ -114,6 +114,17 @@ field. A live copy is aquired with a freshness constraint.
 ```
 
 
+## Zero-Copy
+
+The stream Reader and Writer implementations don't buffer.
+
+```
+BenchmarkSimpleWriter/File/1KiB/Batch1-8         	  493830	      2420 ns/op	 423.14 MB/s
+BenchmarkSimpleWriter/File/1KiB/Batch20-8        	 2849122	       415.2 ns/op	2466.26 MB/s
+BenchmarkSimpleWriter/File/1KiB/Batch400-8       	 3836694	       371.1 ns/op	2759.25 MB/s
+```
+
+
 ## References
 
 * https://martinfowler.com/bliki/CQRS.html

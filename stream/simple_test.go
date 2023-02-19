@@ -3,6 +3,7 @@ package stream_test
 import (
 	"bytes"
 	"io"
+	"math/rand"
 	"os"
 	"strings"
 	"testing"
@@ -41,6 +42,53 @@ func TestSimpleWriterFile(t *testing.T) {
 	if string(bytes) != want {
 		t.Errorf("got file content: %q\nwant file content: %q", bytes, want)
 	}
+}
+
+func BenchmarkSimpleWriter(b *testing.B) {
+	const mediaType = "application/test+octet-stream;v=0.13;tag=true"
+	bytes := make([]byte, 1024)
+	rand.Read(bytes)
+
+	b.Run("File", func(b *testing.B) {
+		f, err := os.OpenFile(b.TempDir()+"/SimpleWriter.bench", os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			b.Fatal(err)
+		}
+		defer f.Close()
+
+		b.Run("1KiB", func(b *testing.B) {
+			benchBatchN := func(b *testing.B, n int) {
+				b.SetBytes(int64(len(bytes)))
+
+				batch := make([]stream.Entry, n)
+				for i := range batch {
+					batch[i].MediaType = mediaType
+					batch[i].Payload = bytes[:1024]
+				}
+
+				w := stream.NewSimpleWriter(f)
+				for n := b.N; n > 0; n -= len(batch) {
+					if n < len(batch) {
+						batch = batch[:n]
+					}
+					err := w.Write(batch)
+					if err != nil {
+						b.Fatal("write error:", err)
+					}
+				}
+			}
+
+			b.Run("Batch1", func(b *testing.B) {
+				benchBatchN(b, 1)
+			})
+			b.Run("Batch20", func(b *testing.B) {
+				benchBatchN(b, 20)
+			})
+			b.Run("Batch400", func(b *testing.B) {
+				benchBatchN(b, 400)
+			})
+		})
+	})
 }
 
 func TestSimpleReader(t *testing.T) {
