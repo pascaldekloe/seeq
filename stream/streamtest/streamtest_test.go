@@ -10,7 +10,7 @@ import (
 )
 
 func TestReaders(t *testing.T) {
-	t.Run("EmptyBucket", func(t *testing.T) {
+	t.Run("EmptyBasket", func(t *testing.T) {
 		r, ch := streamtest.NewChannelReader(1)
 		if n, err := r.Read(nil); n != 0 || err != io.EOF {
 			t.Errorf("read empty queue got (%d, %v), want (0, EOF)", n, err)

@@ -19,12 +19,16 @@ import (
 func VerifyContent(t *testing.T, r stream.Reader, entries ...stream.Entry) (ok bool) {
 	t.Helper()
 
-	bucket := make([]stream.Entry, len(entries)+1)
-	n, err := r.Read(bucket)
+	basket := make([]stream.Entry, len(entries)+1)
+	n, err := r.Read(basket)
 	switch err {
-	case nil, io.EOF:
+	case nil:
+		t.Errorf("stream read got more than %d entries", n)
+		ok = false
+	case io.EOF:
 		if n != len(entries) {
-			t.Errorf("stream read %d entries, want %d", n, len(entries))
+			t.Errorf("stream read got %d entries, want %d", n, len(entries))
+			ok = false
 		}
 	default:
 		t.Error("stream read error:", err)
@@ -35,7 +39,7 @@ func VerifyContent(t *testing.T, r stream.Reader, entries ...stream.Entry) (ok b
 		n = len(entries)
 	}
 	for i := 0; i < n; i++ {
-		got, want := bucket[i], entries[i]
+		got, want := basket[i], entries[i]
 
 		switch {
 		case got.MediaType == want.MediaType && string(got.Payload) == string(want.Payload):
@@ -50,6 +54,12 @@ func VerifyContent(t *testing.T, r stream.Reader, entries ...stream.Entry) (ok b
 	}
 
 	return ok
+}
+
+// NewChannelReader returns a reader which serves from channel input.
+func NewChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
+	c := make(chan stream.Entry, bufN)
+	return &channelReader{c: c}, c
 }
 
 type channelReader struct {
@@ -89,16 +99,11 @@ func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
 // Offset implements the stream.Reader interface.
 func (r *channelReader) Offset() uint64 { return r.offset }
 
-// NewChannelReader returns a reader which serves from channel input.
-func NewChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
-	c := make(chan stream.Entry, bufN)
-	return &channelReader{c: c}, c
-}
-
 // NewFixedReader returns a reader which serves a fixed queue.
 func NewFixedReader(queue ...stream.Entry) stream.Reader {
 	r, c := NewChannelReader(len(queue))
-	for i := range stream.DeepCopy(queue...) {
+	queue = stream.DeepCopy(queue...)
+	for i := range queue {
 		c <- queue[i]
 	}
 	return r
@@ -106,9 +111,6 @@ func NewFixedReader(queue ...stream.Entry) stream.Reader {
 
 // ErrorReader returns a reader which replaces EOF from r with err.
 func ErrorReader(r stream.Reader, err error) stream.Reader {
-	if err == nil {
-		panic("nil error")
-	}
 	return &errorReader{r, err}
 }
 
@@ -131,9 +133,6 @@ func (r *errorReader) Offset() uint64 { return r.r.Offset() }
 
 // DelayReader returns a reader which delays every read from r with d.
 func DelayReader(r stream.Reader, d time.Duration) stream.Reader {
-	if d <= 0 {
-		panic("no delay")
-	}
 	return &delayReader{r, d}
 }
 
@@ -154,31 +153,31 @@ func (r *delayReader) Offset() uint64 { return r.r.Offset() }
 // DripReader returns a reader which hits EOF every n entries from r, starting
 // with the first.
 func DripReader(r stream.Reader, n int) stream.Reader {
-	return &dripReader{r: r, everyN: n, remainN: 0}
+	return &dripReader{r: r, everyN: n, remain: 0}
 }
 
 type dripReader struct {
-	r       stream.Reader
-	everyN  int
-	remainN int
+	r      stream.Reader
+	everyN int // EOF every n read
+	remain int
 }
 
 // Read implements the stream.Reader interface.
 func (r *dripReader) Read(basket []stream.Entry) (n int, err error) {
-	if r.remainN <= 0 {
-		r.remainN = r.everyN
+	if r.remain <= 0 {
+		r.remain = r.everyN
 		return 0, io.EOF
 	}
 
-	if len(basket) > r.remainN {
-		basket = basket[:r.remainN]
+	if len(basket) > r.remain {
+		basket = basket[:r.remain]
 	}
 
 	n, err = verifiedRead(r.r, basket)
-	r.remainN -= n
-	if err == nil && r.remainN == 0 {
-		err = io.EOF
-		r.remainN = r.everyN
+	r.remain -= n
+	if err == nil && r.remain <= 0 {
+		r.remain = r.everyN
+		return n, io.EOF
 	}
 	return
 }
@@ -193,7 +192,7 @@ func verifiedRead(r stream.Reader, basket []stream.Entry) (n int, err error) {
 		panic("read count out of bounds")
 	}
 	if n < len(basket) && err == nil {
-		panic("read less that basket without error")
+		panic("read less than basket without error")
 	}
 	return
 }
@@ -210,10 +209,10 @@ func NewRepoWith(t testing.TB, name string, entries ...stream.Entry) stream.Repo
 
 	w := repo.AppendTo(name)
 	if err := w.Write(entries); err != nil {
-		t.Errorf("write to %q got error: %s", name, err)
+		t.Errorf("stream %q write error: %s", name, err)
 	}
 	if err := w.Close(); err != nil {
-		t.Errorf("writer close of %q got error: %s", name, err)
+		t.Errorf("stream %q close error: %s", name, err)
 	}
 
 	return &repo
