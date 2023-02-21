@@ -61,14 +61,20 @@ func (w simpleFDWriter) Write(batch []Entry) error {
 			return ErrSizeMax
 		}
 		binary.BigEndian.PutUint32(w.headers[i][:], uint32(len(batch[i].Payload)<<8|len(batch[i].MediaType)))
-		v = append(v, syscall.Iovec{&w.headers[i][0], 4})
+		v = append(v, syscall.Iovec{Base: &w.headers[i][0], Len: 4})
 		if batch[i].MediaType != "" {
 			// go won't allow address of string content
 			b := (*[]byte)(unsafe.Pointer(&batch[i].MediaType))
-			v = append(v, syscall.Iovec{&(*b)[0], uint64(uint(len(batch[i].MediaType)))})
+			v = append(v, syscall.Iovec{
+				Base: &(*b)[0],
+				Len:  uint64(uint(len(batch[i].MediaType))),
+			})
 		}
 		if len(batch[i].Payload) != 0 {
-			v = append(v, syscall.Iovec{&batch[i].Payload[0], uint64(uint(len(batch[i].Payload)))})
+			v = append(v, syscall.Iovec{
+				Base: &batch[i].Payload[0],
+				Len:  uint64(uint(len(batch[i].Payload))),
+			})
 		}
 	}
 
