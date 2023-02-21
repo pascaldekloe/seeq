@@ -37,27 +37,49 @@ type RollingFiles struct {
 // Files are stored with their offset in the stream, i.e., the number of entries
 // passed.
 func (repo *RollingFiles) file(name string, offset uint64) string {
-	return filepath.Join(repo.Dir, fmt.Sprintf("%s-%016x", name, offset))
+	return filepath.Join(repo.Dir, fmt.Sprintf("%s-%016x.chunk", name, offset))
 }
 
-// List returns each file present with their corresponding offsets, i.e., the
-// number entries passed before. The (files and their offsets) return is sorted.
-func (repo *RollingFiles) list(name string) (files []string, offsets []uint64, err error) {
-	// TODO(pascaldekloe): Skip glob for more error handling and flexible name content?
-	files, err = filepath.Glob(filepath.Join(repo.Dir, name+"-*"))
+type fileOffsets []uint64
+
+func (o fileOffsets) Len() int           { return len(o) }
+func (o fileOffsets) Less(i, j int) bool { return o[i] < o[j] }
+func (o fileOffsets) Swap(i, j int)      { o[i], o[j] = o[j], o[i] }
+
+// List returns each file for the stream name present, listed by offset, sorted.
+func (repo *RollingFiles) list(name string) (fileOffsets, error) {
+	d, err := os.Open(filepath.Clean(repo.Dir))
 	if err != nil {
-		return nil, nil, err
-	}
-
-	offsets = make([]uint64, len(files))
-	for i, s := range files {
-		offsets[i], err = strconv.ParseUint(s[len(s)-16:], 16, 64)
-		if err != nil {
-			return nil, nil, fmt.Errorf("malformed sequence number/offset in stream file %q: %w", s, err)
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
+		return nil, err
+	}
+	files, err := d.Readdirnames(-1)
+	d.Close()
+	if err != nil {
+		return nil, err
 	}
 
-	return files, offsets, nil
+	var offsets fileOffsets
+	for _, s := range files {
+		// filter "${name}-????????????????.chunk"
+		if len(s) != len(name)+23 ||
+			s[:len(name)] != name ||
+			s[len(name)] != '-' ||
+			s[len(s)-6:] != ".chunk" {
+			continue
+		}
+
+		u, err := strconv.ParseUint(s[len(s)-22:len(s)-6], 16, 64)
+		if err != nil {
+			continue // suspicious
+		}
+		offsets = append(offsets, u)
+	}
+
+	sort.Sort(offsets)
+	return offsets, nil
 }
 
 func (repo *RollingFiles) ReadAt(name string, offset uint64) ReadCloser {
@@ -65,26 +87,31 @@ func (repo *RollingFiles) ReadAt(name string, offset uint64) ReadCloser {
 }
 
 type rollingReader struct {
-	repo  *RollingFiles
-	name  string
-	file  *os.File
-	dec   Reader
-	seqNo uint64 // number of entries passed in the stream
-	skipN uint64 // pending number of entries to discard
+	repo   *RollingFiles
+	name   string
+	file   *os.File
+	dec    Reader
+	offset uint64 // number of entries passed in the stream
+	skipN  uint64 // pending number of entries to discard
 }
 
 // Close implements the io.Closer interface.
-func (roll *rollingReader) Close() error { return roll.file.Close() }
+func (roll *rollingReader) Close() error {
+	if roll.file == nil {
+		return nil
+	}
+	return roll.file.Close()
+}
 
 // Read implements the Reader interface.
 func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 	// lazy init
 	if roll.file == nil {
-		files, offsets, err := roll.repo.list(roll.name)
+		offsets, err := roll.repo.list(roll.name)
 		if err != nil {
 			return 0, err
 		}
-		if len(files) == 0 {
+		if len(offsets) == 0 {
 			// archive empty
 			if roll.skipN > 0 {
 				return 0, ErrFuture
@@ -93,17 +120,18 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 		}
 
 		i := sort.Search(len(offsets), func(i int) bool { return offsets[i] >= roll.skipN })
-		if i >= len(files) {
+		if i >= len(offsets) {
 			return 0, fmt.Errorf("stream offset %d no longer available; archive starts at %d now", roll.skipN, offsets[0])
 		}
+		offset := offsets[i]
 
-		f, err := os.Open(files[i])
+		f, err := os.Open(roll.repo.file(roll.name, offset))
 		if err != nil {
 			return 0, err
 		}
 		roll.file = f
-		roll.dec = NewSimpleReader(f, offsets[i])
-		roll.skipN -= offsets[i]
+		roll.dec = NewSimpleReader(f, offset)
+		roll.skipN -= offset
 	}
 
 	for discard := basket; roll.skipN > 0; {
@@ -182,8 +210,8 @@ func (errorWriter) Close() error { return nil }
 type rollingWriter struct {
 	repo *RollingFiles // parent
 
-	name  string
-	seqNo uint64
+	name   string
+	offset uint64
 
 	file *os.File
 	enc  Writer
@@ -192,6 +220,9 @@ type rollingWriter struct {
 // Close implements the io.Closer interface.
 func (roll *rollingWriter) Close() error {
 	writeLock.Delete(filepath.Join(roll.repo.Dir, roll.name))
+	if roll.file == nil {
+		return nil
+	}
 	return roll.file.Close()
 }
 
@@ -199,28 +230,35 @@ func (roll *rollingWriter) Close() error {
 func (roll *rollingWriter) Write(batch []Entry) error {
 	// lazy init
 	if roll.file == nil {
-		files, offsets, err := roll.repo.list(roll.name)
+		offsets, err := roll.repo.list(roll.name)
 		if err != nil {
 			return err
 		}
-		if len(files) == 0 {
+		if len(offsets) == 0 {
 			// fresh start
-			f, err := os.OpenFile(roll.repo.file(roll.name, 0), os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 0o640)
+			path := roll.repo.file(roll.name, 0)
+			err = os.MkdirAll(filepath.Dir(path), 0o750)
+			if err != nil {
+				return err
+			}
+			f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 0o640)
 			if err != nil {
 				return err
 			}
 			roll.file = f
 		} else {
-			last := len(files) - 1
-			entryN, err := initAndCount(files[last])
+			// open last
+			offset := offsets[len(offsets)-1]
+			path := roll.repo.file(roll.name, offset)
+			entryN, err := initAndCount(path)
 			if err != nil {
 				return err
 			}
-			f, err := os.OpenFile(files[last], os.O_WRONLY|os.O_APPEND, 0)
+			f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
 			if err != nil {
 				return err
 			}
-			roll.seqNo = offsets[last] + uint64(entryN)
+			roll.offset = offset + entryN
 			roll.file = f
 		}
 		roll.enc = NewSimpleWriter(roll.file)
@@ -228,7 +266,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 
 	for len(batch) != 0 {
 		// amount of entries in file allready
-		fill := roll.seqNo % roll.repo.ChunkN
+		fill := roll.offset % roll.repo.ChunkN
 		// amount of entries remaining before rollover
 		space := roll.repo.ChunkN - fill
 
@@ -238,7 +276,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 				roll.file.Close() // block
 				return err
 			}
-			roll.seqNo += uint64(uint(len(batch)))
+			roll.offset += uint64(uint(len(batch)))
 			return nil
 		}
 
@@ -248,7 +286,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 			roll.file.Close() // block
 			return err
 		}
-		roll.seqNo += space    // register
+		roll.offset += space   // register
 		batch = batch[space:]  // pass
 		err = roll.file.Sync() // flush
 		roll.file.Close()
@@ -257,7 +295,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 		}
 
 		// swap to new file
-		f, err := os.OpenFile(roll.repo.file(roll.name, roll.seqNo), os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 640)
+		f, err := os.OpenFile(roll.repo.file(roll.name, roll.offset), os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, 640)
 		if err != nil {
 			return err
 		}
