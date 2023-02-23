@@ -130,7 +130,7 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 			return 0, err
 		}
 		roll.file = f
-		roll.dec = NewSimpleReader(f, offset)
+		roll.dec = NewFramedReader(f, offset)
 		roll.skipN -= offset
 	}
 
@@ -168,7 +168,7 @@ func (roll *rollingReader) Read(basket []Entry) (n int, err error) {
 		}
 		roll.file.Close() // close previous
 		roll.file = f     // switch to next
-		roll.dec = NewSimpleReader(f, offset)
+		roll.dec = NewFramedReader(f, offset)
 
 		var nn int
 		nn, err = roll.dec.Read(basket[n:])
@@ -261,7 +261,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 			roll.offset = offset + entryN
 			roll.file = f
 		}
-		roll.enc = NewSimpleWriter(roll.file)
+		roll.enc = NewFramedWriter(roll.file)
 	}
 
 	for len(batch) != 0 {
@@ -300,7 +300,7 @@ func (roll *rollingWriter) Write(batch []Entry) error {
 			return err
 		}
 		roll.file = f
-		roll.enc = NewSimpleWriter(f)
+		roll.enc = NewFramedWriter(f)
 	}
 
 	return nil

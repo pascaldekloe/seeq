@@ -11,22 +11,22 @@ import (
 	"unsafe"
 )
 
-// NewSimpleWriter encodes each Entry with a 32-bit header. The MediaType size
-// is limited to 255 bytes, and the payload size is limited to 16 MiB − 1 B..
-func NewSimpleWriter(w io.Writer) Writer {
+// NewFramedWriter encodes each Entry framed with a 32-bit prefix. The MediaType
+// size is limited to 255 bytes. The payload size is limited to 16 MiB − 1 B.
+func NewFramedWriter(w io.Writer) Writer {
 	f, ok := w.(*os.File)
 	if ok {
-		return simpleFDWriter{fd: f.Fd()}
+		return &fDWriter{fd: f.Fd()}
 	}
-	return simpleBufWriter{bufio.NewWriter(w)}
+	return bufWriter{bufio.NewWriter(w)}
 }
 
-type simpleBufWriter struct {
+type bufWriter struct {
 	w *bufio.Writer // output
 }
 
 // Write implements the Writer interface.
-func (w simpleBufWriter) Write(batch []Entry) error {
+func (w bufWriter) Write(batch []Entry) error {
 	for i := range batch {
 		if len(batch[i].MediaType) > 255 || len(batch[i].Payload) > 0xFF_FFFF {
 			return ErrSizeMax
@@ -41,14 +41,14 @@ func (w simpleBufWriter) Write(batch []Entry) error {
 	return w.w.Flush()
 }
 
-type simpleFDWriter struct {
+type fDWriter struct {
 	fd      uintptr
 	headers [][4]byte // reusable buffer
 	vectors []syscall.Iovec
 }
 
 // Write implements the Writer interface.
-func (w simpleFDWriter) Write(batch []Entry) error {
+func (w *fDWriter) Write(batch []Entry) error {
 	if len(batch) > cap(w.headers) {
 		w.headers = make([][4]byte, len(batch))
 		w.vectors = make([]syscall.Iovec, 0, len(batch)*3)
@@ -137,7 +137,19 @@ func vectorLimit() int {
 	return max
 }
 
-type simpleReader struct {
+// NewFramedReader decodes output from a NewFramedWriter. Partial entries at the
+// end of input simply cause an io.EOF—not io.ErrUnexpectedEOF. Such incomplete
+// content will pass on to any retries once the remaining data becomes available
+// again.
+func NewFramedReader(r io.Reader, offset uint64) Reader {
+	return &bufReader{
+		r:      r,
+		offset: offset,
+		buf:    make([]byte, 512),
+	}
+}
+
+type bufReader struct {
 	r      io.Reader // input
 	offset uint64    // position
 
@@ -149,18 +161,8 @@ type simpleReader struct {
 	mediaTypes map[string]string
 }
 
-// NewSimpleReader decodes output from a SimpleWriter. Partial entries at the
-// end of input simply cause an io.EOF—not io.ErrUnexpectedEOF.
-func NewSimpleReader(r io.Reader, offset uint64) Reader {
-	return &simpleReader{
-		r:      r,
-		offset: offset,
-		buf:    make([]byte, 512),
-	}
-}
-
 // Read implements the Reader interface.
-func (r *simpleReader) Read(basket []Entry) (n int, err error) {
+func (r *bufReader) Read(basket []Entry) (n int, err error) {
 	defer func() {
 		r.offset += uint64(uint(n))
 	}()
@@ -299,4 +301,4 @@ func (r *simpleReader) Read(basket []Entry) (n int, err error) {
 }
 
 // Offset implements the Reader interface.
-func (r *simpleReader) Offset() uint64 { return r.offset }
+func (r *bufReader) Offset() uint64 { return r.offset }
