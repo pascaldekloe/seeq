@@ -1,3 +1,5 @@
+//go:build unix && !omitunix
+
 package snapshot
 
 import (

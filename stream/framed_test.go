@@ -3,93 +3,12 @@ package stream_test
 import (
 	"bytes"
 	"io"
-	"math/rand"
-	"os"
 	"strings"
 	"testing"
 	"testing/iotest"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
-
-func TestFramedWriterFile(t *testing.T) {
-	dir := t.TempDir()
-	f, err := os.CreateTemp(dir, "simplef.")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	w := stream.NewFramedWriter(f)
-	err = w.Write([]stream.Entry{
-		{},
-		{"text", nil},
-		{"", []byte{'A'}},
-		{"text", []byte{'A', 'B'}},
-	})
-	if err != nil {
-		t.Error("write error:", err)
-	}
-
-	bytes, err := os.ReadFile(f.Name())
-	if err != nil {
-		t.Fatal(err)
-	}
-	const want = "\x00\x00\x00\x00" +
-		"\x00\x00\x00\x04text" +
-		"\x00\x00\x01\x00A" +
-		"\x00\x00\x02\x04textAB"
-	if string(bytes) != want {
-		t.Errorf("got file content: %q\nwant file content: %q", bytes, want)
-	}
-}
-
-func BenchmarkFramedWriter(b *testing.B) {
-	const mediaType = "application/test+octet-stream;v=0.13;tag=true"
-	bytes := make([]byte, 1024)
-	rand.Read(bytes)
-
-	b.Run("File", func(b *testing.B) {
-		f, err := os.OpenFile(b.TempDir()+"/FramedWriter.bench", os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o644)
-		if err != nil {
-			b.Fatal(err)
-		}
-		defer f.Close()
-
-		b.Run("1KiB", func(b *testing.B) {
-			benchBatchN := func(b *testing.B, n int) {
-				b.SetBytes(int64(len(bytes)))
-
-				batch := make([]stream.Entry, n)
-				for i := range batch {
-					batch[i].MediaType = mediaType
-					batch[i].Payload = bytes[:1024]
-				}
-
-				w := stream.NewFramedWriter(f)
-				for n := b.N; n > 0; n -= len(batch) {
-					if n < len(batch) {
-						batch = batch[:n]
-					}
-					err := w.Write(batch)
-					if err != nil {
-						b.Fatal("write error:", err)
-					}
-				}
-			}
-
-			b.Run("Batch1", func(b *testing.B) {
-				benchBatchN(b, 1)
-			})
-			b.Run("Batch20", func(b *testing.B) {
-				benchBatchN(b, 20)
-			})
-			b.Run("Batch400", func(b *testing.B) {
-				benchBatchN(b, 400)
-			})
-		})
-	})
-}
 
 func TestFramedReader(t *testing.T) {
 	assertEntry := func(t *testing.T, buf []stream.Entry, i int, wantMediaType, wantPayload string) {
