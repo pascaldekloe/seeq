@@ -69,3 +69,21 @@ type WriteCloser interface {
 	Writer
 	io.Closer
 }
+
+// MediaTypes is a string set used to deduplicate memory.
+type mediaTypes map[string]string
+
+// Singleton maps the bytes to their string equivalent.
+func (t mediaTypes) singleton(bytes []byte) string {
+	// no memory allocation for map lookup
+	s, ok := t[string(bytes)]
+	if ok {
+		return s
+	}
+
+	// allocate new entry
+	s = string(bytes)
+	// register for reuse
+	t[s] = s
+	return s
+}

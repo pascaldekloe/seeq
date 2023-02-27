@@ -33,18 +33,29 @@ func (w bufWriter) Write(batch []Entry) error {
 	return w.w.Flush()
 }
 
-// NewFramedReader decodes output from a NewFramedWriter. Partial entries at the
-// end of input simply cause an io.EOF—not io.ErrUnexpectedEOF. Such incomplete
-// content will pass on to any retries once the remaining data becomes available
-// again.
+// NewFramedReader decodes output from a NewFramedWriter. The Reader must start
+// at the beginning of a frame. Offset counts the number of entries read before
+// the current Reader position.
+//
+// Partial entries at the end cause an io.EOF—not io.ErrUnexpectedEOF. Such
+// incomplete content will pass on to retries once the remaining data becomes
+// available again.
+//
+// Each unique media-type value is kept in memory. Read does not allocate any
+// memory for entries with reoccurring media types, other than the (automatic)
+// buffer resize once required.
 func NewFramedReader(r io.Reader, offset uint64) Reader {
 	return &bufReader{
-		r:      r,
-		offset: offset,
-		buf:    make([]byte, 512),
+		r:          r,
+		offset:     offset,
+		buf:        make([]byte, 512),
+		mediaTypes: make(mediaTypes),
 	}
 }
 
+// BufReader decodes a framed stream with a single buffer to read with and slice
+// from. The buffer grows on demand, depending on the entry sizes encountered,
+// and depending on the basket length of the Read invocations.
 type bufReader struct {
 	r      io.Reader // input
 	offset uint64    // position
@@ -53,8 +64,7 @@ type bufReader struct {
 	bufI int    // buffer position index
 	bufN int    // buffer byte count
 
-	// Reuse strings intead of a memory allocation per Entry.
-	mediaTypes map[string]string
+	mediaTypes // each unique value read thus far
 }
 
 // Read implements the Reader interface.
@@ -75,7 +85,6 @@ func (r *bufReader) Read(basket []Entry) (n int, err error) {
 	// need EOF even with a zero length basket or a full basket
 	for {
 		const headerLen = 4
-
 	BufferHeader:
 		for r.bufN < headerLen {
 			end := len(r.buf)
@@ -128,18 +137,19 @@ func (r *bufReader) Read(basket []Entry) (n int, err error) {
 		mediaTypeLen := int(header & 0xFF)
 		payloadLen := int(header >> 8)
 
-	BufferRemainder:
-		for l := headerLen + mediaTypeLen + payloadLen; r.bufN < l; {
+		frameLen := headerLen + mediaTypeLen + payloadLen
+	BufferFrame:
+		for r.bufN < frameLen {
 			end := len(r.buf)
 			if r.bufI < bufSplit {
 				end = bufSplit
 			}
 
-			readN, err := io.ReadAtLeast(r.r, r.buf[r.bufI+r.bufN:end], l-r.bufN)
+			readN, err := io.ReadAtLeast(r.r, r.buf[r.bufI+r.bufN:end], frameLen-r.bufN)
 			r.bufN += readN
 			switch err {
 			case nil:
-				break BufferRemainder // got it
+				break BufferFrame // got it
 			case io.ErrShortBuffer:
 				break
 			case io.ErrUnexpectedEOF:
@@ -149,14 +159,14 @@ func (r *bufReader) Read(basket []Entry) (n int, err error) {
 			}
 
 			// grow buffer
-			if r.bufI >= bufSplit && bufSplit >= l {
+			if r.bufI >= bufSplit && bufSplit >= frameLen {
 				// roll over and move remainder, if any
 				copy(r.buf[:r.bufN], r.buf[r.bufI:])
 				r.bufI = 0
 			} else {
 				// buffer utilized by basket[:n]
 				// assert len(basket) > n ≥ 0
-				est := (len(r.buf) + l) * len(basket) / (n + 1)
+				est := (len(r.buf) + frameLen) * len(basket) / (n + 1)
 				est += headerLen // include read ahead
 				grow := make([]byte, 1<<bits.Len(uint(est)))
 
@@ -173,24 +183,10 @@ func (r *bufReader) Read(basket []Entry) (n int, err error) {
 
 		mediaTypeOffset := r.bufI + headerLen
 		payloadOffset := mediaTypeOffset + mediaTypeLen
-		r.bufI = payloadOffset + payloadLen
-		r.bufN -= headerLen + mediaTypeLen + payloadLen
+		r.bufI += frameLen
+		r.bufN -= frameLen
 
-		// no memory allocation for map lookup
-		mediaType, ok := r.mediaTypes[string(r.buf[mediaTypeOffset:payloadOffset])]
-		if !ok {
-			// allocate new entry
-			mediaType = string(r.buf[mediaTypeOffset:payloadOffset])
-			// register for reuse
-			if r.mediaTypes == nil {
-				// lazy initiation
-				r.mediaTypes = make(map[string]string)
-			}
-			r.mediaTypes[mediaType] = mediaType
-		}
-
-		// install 🧺
-		basket[n].MediaType = mediaType
+		basket[n].MediaType = r.mediaTypes.singleton(r.buf[mediaTypeOffset:payloadOffset])
 		basket[n].Payload = r.buf[payloadOffset:r.bufI:r.bufI]
 		n++
 	}
