@@ -3,9 +3,11 @@ package stream_test
 import (
 	"bytes"
 	"io"
+	"math/rand"
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
@@ -231,4 +233,81 @@ func FuzzFramedReader(f *testing.F) {
 			t.Error("read got error:", err)
 		}
 	})
+}
+
+// TestPipe is a fat integration test for the framed reader & writer.
+func TestPipe(t *testing.T) {
+	pr, pw := io.Pipe()
+	timeout := time.AfterFunc(2*time.Second, func() {
+		t.Error("test expired")
+		pr.Close()
+	})
+	defer timeout.Stop()
+
+	const testN = 10_000 // stream entry count
+	testData := make([]byte, testN/3)
+	rand.Read(testData)
+	payloadSlice := func(entryN int) []byte {
+		// vary payload per entry, including zero
+		return testData[:entryN%len(testData)]
+	}
+
+	go func() {
+		defer pw.Close()
+		w := stream.NewFramedWriter(pw)
+		batch := make([]stream.Entry, 7)
+
+		var entryN int // production count
+		for writeN := 1; entryN < testN; writeN++ {
+			// vary batch size per read, including zero
+			batch = batch[:(writeN*3)%(cap(batch)+1)]
+			if todo := testN - entryN; len(batch) > todo {
+				batch = batch[:todo]
+			}
+
+			for i := range batch {
+				entryN++
+				batch[i].Payload = payloadSlice(entryN)
+				batch[i].MediaType = "application/octet-stream"
+			}
+
+			err := w.Write(batch)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+
+	r := stream.NewFramedReader(pr, 0)
+	basket := make([]stream.Entry, 5)
+
+	entryN := 0 // evaluate count
+	for readN := 1; ; readN++ {
+		// vary basket size per read, including zero
+		basket = basket[:(readN*7)%(cap(basket)+1)]
+		n, err := r.Read(basket)
+
+		// handle basket[:n] before err
+		for i := 0; i < n; i++ {
+			entryN++
+			if string(basket[i].Payload) != string(payloadSlice(entryN)) {
+				t.Fatalf("payload from entry № %d is off", entryN)
+			}
+		}
+
+		switch err {
+		case nil:
+			if entryN >= testN {
+				t.Fatalf("no EOF after %d (out of %d) entries read", entryN, testN)
+			}
+		case io.EOF:
+			if entryN != testN {
+				t.Fatalf("got EOF after %d (out of %d) entries read", entryN, testN)
+			}
+			return // OK
+		default:
+			t.Fatalf("got error after %d (out of %d) entries read: %s", entryN, testN, err)
+		}
+	}
 }
