@@ -48,7 +48,7 @@ func NewFramedReader(r io.Reader, offset uint64) Reader {
 	return &bufReader{
 		r:          r,
 		offset:     offset,
-		buf:        make([]byte, 512),
+		buf:        make([]byte, 4096),
 		mediaTypes: make(mediaTypes),
 	}
 }
