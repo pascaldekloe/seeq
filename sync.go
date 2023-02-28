@@ -14,12 +14,15 @@ import (
 )
 
 // QuerySet contains aggregates with any and all entries from an input stream
-// applied at some point in time. The AggregateSet is read-only—ready to serve
-// queries. No more updates shall be applied.
+// applied at some point in time. The AggregateSet is ready to serve queries.
+// No more updates shall be applied.
 type QuerySet[AggregateSet any] struct {
 	Aggs *AggregateSet // read-only
-	// The sequence number equals the amount of stream entries applied.
-	SeqNo uint64
+
+	// Offset is stream position. The value matches the number of stream
+	// entries applied to each aggregate in Aggs.
+	Offset uint64
+
 	// Live is defined as the latest EOF read from the input stream.
 	LiveAt time.Time
 }
@@ -153,7 +156,7 @@ func (g *LightGroup[AggregateSet]) SyncFrom(streams stream.Repo, streamName stri
 		select {
 		case <-offerTimer.C:
 			break // no demand
-		case g.release <- QuerySet[AggregateSet]{Aggs: set, SeqNo: r.Offset(), LiveAt: lastReadTime}:
+		case g.release <- QuerySet[AggregateSet]{Aggs: set, Offset: r.Offset(), LiveAt: lastReadTime}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}

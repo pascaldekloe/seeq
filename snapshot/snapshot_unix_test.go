@@ -13,11 +13,11 @@ import (
 )
 
 func TestFileDirCommit(t *testing.T) {
-	const name, seqNo = "x", 1001
+	const name, offset = "x", 1001
 	a := newTestFileDir(t)
 
 	const payload = "Hello world!"
-	p, err := a.Make(name, seqNo)
+	p, err := a.Make(name, offset)
 	if err != nil {
 		t.Fatal("Make got error:", err)
 	}
@@ -33,11 +33,11 @@ func TestFileDirCommit(t *testing.T) {
 	if err != nil {
 		t.Error("History got error:", err)
 	}
-	if len(h) != 1 || h[0] != seqNo {
-		t.Errorf("History got %d, want [ %d ]", h, seqNo)
+	if len(h) != 1 || h[0] != offset {
+		t.Errorf("History got %d, want [ %d ]", h, offset)
 	}
 
-	r, err := a.Open(name, seqNo)
+	r, err := a.Open(name, offset)
 	if err != nil {
 		t.Fatal("Open got error:", err)
 	}
@@ -51,10 +51,10 @@ func TestFileDirCommit(t *testing.T) {
 }
 
 func TestFileDirAbort(t *testing.T) {
-	const name, seqNo = "foo", 42
+	const name, offset = "foo", 42
 	a := newTestFileDir(t)
 
-	p, err := a.Make(name, seqNo)
+	p, err := a.Make(name, offset)
 	if err != nil {
 		t.Fatal("Make got error:", err)
 	}
@@ -74,7 +74,7 @@ func TestFileDirAbort(t *testing.T) {
 		t.Errorf("History got %d, want none", h)
 	}
 
-	r, err := a.Open(name, seqNo)
+	r, err := a.Open(name, offset)
 	switch {
 	case err == nil:
 		t.Error("Open aborted got no error")
@@ -85,16 +85,16 @@ func TestFileDirAbort(t *testing.T) {
 }
 
 func TestFileDirRange(t *testing.T) {
-	const name, seqNo1, seqNo2, seqNo3 = "test", 42, 99, 0x1234567890abcdef
+	const name, offset1, offset2, offset3 = "test", 42, 99, 0x1234567890abcdef
 	a := newTestFileDir(t)
 
-	for _, seqNo := range []uint64{seqNo1, seqNo2, seqNo3} {
-		p, err := a.Make(name, seqNo)
+	for _, offset := range []uint64{offset1, offset2, offset3} {
+		p, err := a.Make(name, offset)
 		if err != nil {
-			t.Fatalf("Make sequent number %d got error: %s", seqNo, err)
+			t.Fatalf("Make sequent number %d got error: %s", offset, err)
 		}
 		if err := p.Commit(); err != nil {
-			t.Errorf("Commit sequent number %d got error: %s", seqNo, err)
+			t.Errorf("Commit sequent number %d got error: %s", offset, err)
 		}
 	}
 
@@ -102,11 +102,11 @@ func TestFileDirRange(t *testing.T) {
 	if err != nil {
 		t.Error("History got error:", err)
 	}
-	if len(h) != 3 || h[0] != seqNo1 || h[1] != seqNo2 || h[2] != seqNo3 {
-		t.Errorf("History got %d, want [ %d %d %d ]", h, seqNo1, seqNo2, seqNo3)
+	if len(h) != 3 || h[0] != offset1 || h[1] != offset2 || h[2] != offset3 {
+		t.Errorf("History got %d, want [ %d %d %d ]", h, offset1, offset2, offset3)
 	}
 
-	r, err := a.Open(name, seqNo3)
+	r, err := a.Open(name, offset3)
 	if err != nil {
 		t.Fatal("Open got error:", err)
 	}

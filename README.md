@@ -13,8 +13,13 @@ This is free and unencumbered software released into the
 ## Concept
 
 *Streams* are append-only[^1] collections. As such, each entry inherits a fixed
-*sequence number*—no gaps. *Live* streams grow over time with a shifting end, as
-opposed to suspended streams, which are read-only.
+*sequence number*. Stream positions start at *offset* zero. The first entry gets
+sequence number one, which sets the stream offset also to one, and so on.
+
+#### Stream Attributes
+
+* Name
+* Offset
 
 #### Entry Attributes
 
@@ -22,8 +27,9 @@ opposed to suspended streams, which are read-only.
 * Media Type
 * Sequence Number
 
-Read access is limited to chronological iteration. Reads may start at a sequence
-number (offset) though.
+*Live* streams are subject to contious growth, as opposed to suspended streams.
+Read access is limited to chronological iteration. Reads may start at any offset
+though.
 
 *Aggregates* consume streams to collect information for one or more specific
 questions/queries. The limited scope allows for more optimization on each case.
@@ -107,7 +113,7 @@ field. A live copy is aquired with a freshness constraint.
 		return
 	}
 
-	log.Printf("all %T aggregates are at sequence № %d", q.Aggs, q.SeqNo)
+	log.Printf("all %T aggregates are at offset № %d", q.Aggs, q.Offset)
 	log.Print("got %d RFC authors", q.Aggs.Authors.N)
 	log.Print("got %d references to RFC 2616", len(q.Aggs.Refs.PerRFC[2616].Inbound))
 }

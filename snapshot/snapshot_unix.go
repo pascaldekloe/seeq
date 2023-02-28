@@ -19,16 +19,16 @@ func NewFileDir(path string) Archive { return fileDir(path) }
 type fileDir string
 
 // Open implements the Archive interface.
-func (dir fileDir) Open(name string, seqNo uint64) (io.ReadCloser, error) {
+func (dir fileDir) Open(name string, offset uint64) (io.ReadCloser, error) {
 	// validate name
-	path := filepath.Join(string(dir), fmt.Sprintf("%s-%016X.snapshot", name, seqNo))
+	path := filepath.Join(string(dir), fmt.Sprintf("%s-%016X.snapshot", name, offset))
 	return os.Open(path)
 }
 
 // Make implements the Archive interface.
-func (dir fileDir) Make(name string, seqNo uint64) (Production, error) {
+func (dir fileDir) Make(name string, offset uint64) (Production, error) {
 	// validate name
-	path := filepath.Join(string(dir), fmt.Sprintf("%s-%016X.spool", name, seqNo))
+	path := filepath.Join(string(dir), fmt.Sprintf("%s-%016X.spool", name, offset))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
 	if err != nil {
 		return nil, err
@@ -84,6 +84,7 @@ func (p fileProduction) Abort() error {
 	return removeErr
 }
 
+// History implements the Archive interface.
 func (dir fileDir) History(name string) ([]uint64, error) {
 	entries, err := os.ReadDir(string(dir))
 	if err != nil {
@@ -100,12 +101,12 @@ func (dir fileDir) History(name string) ([]uint64, error) {
 		if len(fname) != len(name)+26 || fname[:len(name)] != name || fname[len(name)] != '-' || fname[len(name)+17:] != ".snapshot" {
 			continue
 		}
-		seqNo, err := strconv.ParseUint(fname[len(name)+1:len(name)+17], 16, 64)
+		offset, err := strconv.ParseUint(fname[len(name)+1:len(name)+17], 16, 64)
 		if err != nil {
 			return nil, fmt.Errorf("snapshot file name %q: %w", fname, err)
 		}
 
-		history = append(history, seqNo)
+		history = append(history, offset)
 	}
 
 	return history, nil

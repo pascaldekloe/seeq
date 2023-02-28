@@ -2,8 +2,8 @@ package stream
 
 import "errors"
 
-// ErrFuture denies a sequence numbers beyond the available.
-var ErrFuture = errors.New("stream position not reached yet")
+// ErrFuture denies an offset beyond the current.
+var ErrFuture = errors.New("stream offset not reached yet")
 
 // Repo is a named stream-collection. A stream can have only one Writer. Any
 // amount of Readers are permitted.

@@ -51,7 +51,7 @@ func Example() {
 		return
 	}
 
-	fmt.Printf("Stream %q read to offset %d.\n", streamName, q.SeqNo)
+	fmt.Printf("Stream %q read to offset %d.\n", streamName, q.Offset)
 	fmt.Printf("The average payload size was %d bytes.\n", q.Aggs.Stats.EventSizeAvg())
 	fmt.Printf("digest: %#x\n", q.Aggs.Crypto.Digest.Sum(nil))
 	// Output:

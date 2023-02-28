@@ -1,5 +1,4 @@
-// Package snapshot provides aggregate state persistence. Serials are identified
-// by the aggregate name and the position of the input stream.
+// Package snapshot provides aggregate state persistence.
 package snapshot
 
 import (
@@ -15,20 +14,21 @@ type Production interface {
 	Abort() error  // discards
 }
 
-// Archive manages a snapshot collection.
+// Archive manages a snapshot collection. The serials are stored by aggregate
+// name and their respective input-stream offset.
 type Archive interface {
 	// Open fetches a serial, with fs.ErrNotExist on absense.
-	Open(name string, seqNo uint64) (io.ReadCloser, error)
+	Open(name string, offset uint64) (io.ReadCloser, error)
 	// Make persists a serial. It may overwrite an existing one.
-	Make(name string, seqNo uint64) (Production, error)
+	Make(name string, offset uint64) (Production, error)
 
-	// History lists each sequence number available in ascending order.
+	// History lists each offset available in ascending order.
 	History(name string) ([]uint64, error)
 }
 
-// LastCommon returns the highest sequence number every name has in common with
-// each other, or zero for no overlap at all.
-func LastCommon(a Archive, names ...string) (seqNo uint64, err error) {
+// LastCommon returns the highest input-stream offset every aggregate name has
+// in common with each other, or zero for no overlap at all.
+func LastCommon(a Archive, names ...string) (offset uint64, err error) {
 	if len(names) == 0 {
 		return 0, nil
 	}
@@ -45,7 +45,7 @@ func LastCommon(a Archive, names ...string) (seqNo uint64, err error) {
 	others := histories[1:]
 MatchOptions:
 	for len(options) != 0 {
-		// pop highest sequence number
+		// pop highest offset
 		last := options[len(options)-1]
 		options = options[:len(options)-1]
 
