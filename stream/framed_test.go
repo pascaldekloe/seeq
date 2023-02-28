@@ -2,6 +2,7 @@ package stream_test
 
 import (
 	"bytes"
+	"encoding/hex"
 	"io"
 	"math/rand"
 	"strings"
@@ -245,17 +246,19 @@ func TestPipe(t *testing.T) {
 	defer timeout.Stop()
 
 	const testN = 10_000 // stream entry count
-	testData := make([]byte, testN/3)
+
+	testData := make([]byte, 1024)
 	rand.Read(testData)
+	// vary payload per entry, including zero
 	payloadSlice := func(entryN int) []byte {
-		// vary payload per entry, including zero
 		return testData[:entryN%len(testData)]
 	}
 
+	// write testN stream-entries into the pipe
 	go func() {
 		defer pw.Close()
 		w := stream.NewFramedWriter(pw)
-		batch := make([]stream.Entry, 7)
+		batch := make([]stream.Entry, 5)
 
 		var entryN int // production count
 		for writeN := 1; entryN < testN; writeN++ {
@@ -283,7 +286,7 @@ func TestPipe(t *testing.T) {
 	basket := make([]stream.Entry, 5)
 
 	entryN := 0 // evaluate count
-	for readN := 1; ; readN++ {
+	for readN := 1; !t.Failed(); readN++ {
 		// vary basket size per read, including zero
 		basket = basket[:(readN*7)%(cap(basket)+1)]
 		n, err := r.Read(basket)
@@ -292,7 +295,9 @@ func TestPipe(t *testing.T) {
 		for i := 0; i < n; i++ {
 			entryN++
 			if string(basket[i].Payload) != string(payloadSlice(entryN)) {
-				t.Fatalf("payload from entry № %d is off", entryN)
+				t.Errorf("payload from entry № %d is off", entryN)
+				t.Log("got:\n", hex.Dump(basket[i].Payload))
+				t.Log("want:\n", hex.Dump(payloadSlice(entryN)))
 			}
 		}
 
