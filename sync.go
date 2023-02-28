@@ -34,10 +34,11 @@ type aggregateField struct {
 	aggName string // unique label
 }
 
-// AggregateSetFields reads fields tagged as aggregate.
+// AggregateSetFields validates the configuration and it returns the fields
+// tagged as aggregate.
 func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 	if k := setType.Kind(); k != reflect.Struct {
-		return nil, fmt.Errorf("aggregate set %s kind %s is not a struct", setType, k)
+		return nil, fmt.Errorf("aggregate set %s is of kind %s, need %s", setType, k, reflect.Struct)
 	}
 
 	var found []aggregateField
@@ -60,7 +61,7 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 			return nil, fmt.Errorf("aggregate set %s field %s is not exported", setType, field.Name)
 		}
 		if !field.Type.Implements(aggregateType) {
-			return nil, fmt.Errorf("aggregate set %s field %s does not implement %s", setType, field.Name, aggregateType)
+			return nil, fmt.Errorf("aggregate set %s field %s type %s does not implement %s", setType, field.Name, field.Type, aggregateType)
 		}
 
 		found = append(found, aggregateField{i, name})
