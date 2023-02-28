@@ -102,6 +102,8 @@ type LightGroup[AggregateSet any] struct {
 	live chan *QuerySet[AggregateSet]
 	// working copy handover
 	release chan QuerySet[AggregateSet]
+	// halts synchronisation
+	interrupt chan struct{}
 
 	Snapshots snapshot.Archive // optional
 }
@@ -121,10 +123,24 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 		setFields: fields,
 		live:      make(chan *QuerySet[AggregateSet], 1),
 		release:   make(chan QuerySet[AggregateSet]),
+		interrupt: make(chan struct{}, 1),
 	}
 	g.live <- nil // initial placeholder
 
 	return &g, nil
+}
+
+// ErrInterrupt is the result of an Intterupt call on a synchronisation group.
+var ErrInterrupt = errors.New("aggregate synchronisation received an interrupt")
+
+// Interrupt halts synchronisation with ErrInterrupt.
+func (g *LightGroup[AggregateSet]) Interrupt() {
+	select {
+	case g.interrupt <- struct{}{}:
+		break // signal installed
+	default:
+		break // signal already pending
+	}
 }
 
 // SyncFrom a stream until failure.
@@ -221,6 +237,8 @@ func (g *LightGroup[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, 
 			if err != nil {
 				return err
 			}
+		case <-g.interrupt:
+			return ErrInterrupt
 		}
 	}
 }
@@ -309,7 +327,7 @@ func (g *LightGroup[AggregateSet]) fork(offset uint64, old []Aggregate[stream.En
 }
 
 // ErrLiveFuture denies freshness.
-var ErrLiveFuture = errors.New("agg: live view from future not available")
+var ErrLiveFuture = errors.New("aggregate from future not available")
 
 // LiveSince returns aggregates no older than notBefore.
 func (g *LightGroup[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time) (QuerySet[AggregateSet], error) {

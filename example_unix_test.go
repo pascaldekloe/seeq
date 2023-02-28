@@ -39,7 +39,9 @@ func Example() {
 		fmt.Println("illegal setup:", err)
 		return
 	}
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		fmt.Println(group.SyncFromRepo(repo, "demo-stream"))
 	}()
 
@@ -51,11 +53,15 @@ func Example() {
 		return
 	}
 
-	fmt.Printf("Stream %q read to offset %d.\n", streamName, q.Offset)
-	fmt.Printf("The average payload size was %d bytes.\n", q.Aggs.Stats.EventSizeAvg())
-	fmt.Printf("digest: %#x\n", q.Aggs.Crypto.Digest.Sum(nil))
+	fmt.Printf("• stream offset: %d\n", q.Offset)
+	fmt.Printf("• average payload size: %d bytes\n", q.Aggs.Stats.EventSizeAvg())
+	fmt.Printf("• hash digest: %#x\n", q.Aggs.Crypto.Digest.Sum(nil))
+
+	group.Interrupt()
+	<-done
 	// Output:
-	// Stream "demo-stream" read to offset 2.
-	// The average payload size was 6 bytes.
-	// digest: 0x8f4ec1811c6c4261c97a7423b3a56d69f0f160074f39745af20bb5fcf65ccf78
+	// • stream offset: 2
+	// • average payload size: 6 bytes
+	// • hash digest: 0x8f4ec1811c6c4261c97a7423b3a56d69f0f160074f39745af20bb5fcf65ccf78
+	// aggregate synchronisation received an interrupt
 }
