@@ -1,7 +1,7 @@
 package seeq_test
 
 import (
-	"crypto/sha256"
+	"crypto"
 	"encoding/gob"
 	"encoding/json"
 	"hash"
@@ -16,11 +16,11 @@ type WORMAggs struct {
 	Crypto *WORMCheck `aggregate:"demo-crypto"`
 }
 
-// NewWORMAggs is a constructor.
+// NewWORMAggs returns the aggregate collection for stream-offset zero.
 func NewWORMAggs() (*WORMAggs, error) {
 	return &WORMAggs{
 		Stats:  new(WORMStats),
-		Crypto: &WORMCheck{sha256.New()},
+		Crypto: NewSecureWORMCheck(crypto.SHA256),
 	}, nil
 }
 
@@ -63,6 +63,13 @@ func (stats *WORMStats) LoadFrom(r io.Reader) error {
 // directly when aquired through a seeq.QuerySet.
 type WORMCheck struct {
 	Digest hash.Hash
+}
+
+// NewSecureWORMCheck returns a new aggregate for stream-offset zero.
+func NewSecureWORMCheck(h crypto.Hash) *WORMCheck {
+	c := &WORMCheck{h.New()}
+	gob.Register(c.Digest)
+	return c
 }
 
 // AddNext implements the seeq.Aggregate interface.
