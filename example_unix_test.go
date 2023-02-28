@@ -40,7 +40,7 @@ func Example() {
 		return
 	}
 	go func() {
-		fmt.Println(group.SyncFrom(repo, "demo-stream"))
+		fmt.Println(group.SyncFromRepo(repo, "demo-stream"))
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)

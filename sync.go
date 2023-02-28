@@ -86,7 +86,7 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 }
 
 // LightGroup feeds a single AggregateSet sequentially. Whenever a Live method
-// expires its current QuerySet, then the update sigleton gets used next. The
+// expires its current QuerySet, then the update singleton gets used next. The
 // Sync method creates a new clone from a new snapshot to continue with. This
 // setup works well for states with fast snapshot handling [Dumper & Loader].
 //
@@ -127,17 +127,71 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 	return &g, nil
 }
 
-// SyncFrom a repository streamName until failure.
-func (g *LightGroup[AggregateSet]) SyncFrom(streams stream.Repo, streamName string) error {
+// SyncFrom a stream until failure.
+func (g *LightGroup[AggregateSet]) SyncFrom(r stream.Reader) error {
 	// instantiate working copy
 	set, aggs, err := g.fork(0, nil)
 	if err != nil {
 		return err
 	}
 
-	r, err := g.initStream(streams, streamName, aggs)
-	defer r.Close()
+	return g.syncFrom(r, set, aggs)
+}
 
+// SyncFromRepo until failure.
+func (g *LightGroup[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName string) error {
+	if g.Snapshots == nil {
+		return g.SyncFrom(streams.ReadAt(streamName, 0))
+	}
+
+	// instantiate working copy
+	set, aggs, err := g.fork(0, nil)
+	if err != nil {
+		return err
+	}
+
+	aggNames := make([]string, 0, len(g.setFields))
+	for _, f := range g.setFields {
+		aggNames = append(aggNames, f.aggName)
+	}
+	offset, err := snapshot.LastCommon(g.Snapshots, aggNames...)
+	if err != nil {
+		return err
+	}
+	if offset == 0 {
+		return g.SyncFrom(streams.ReadAt(streamName, 0))
+	}
+
+	errs := make(chan error, len(aggs))
+	for i := range aggs {
+		go func(i int) {
+			r, err := g.Snapshots.Open(aggNames[i], offset)
+			if err != nil {
+				errs <- err
+				return
+			}
+			err = aggs[i].LoadFrom(r)
+			r.Close()
+			errs <- err
+		}(i)
+	}
+
+	var errN int
+	for range aggs {
+		err := <-errs
+		if err != nil {
+			errN++
+			log.Print(err)
+		}
+	}
+	if errN != 0 {
+		return fmt.Errorf("aggregate group synchronisation halt on %d snapshot recovery error(s)", errN)
+	}
+
+	return g.syncFrom(streams.ReadAt(streamName, offset), set, aggs)
+}
+
+func (g *LightGroup[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs []Aggregate[stream.Entry]) error {
 	// once live the QuerySet is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
@@ -169,52 +223,6 @@ func (g *LightGroup[AggregateSet]) SyncFrom(streams stream.Repo, streamName stri
 			}
 		}
 	}
-}
-
-func (g *LightGroup[AggregateSet]) initStream(streams stream.Repo, streamName string, aggs []Aggregate[stream.Entry]) (stream.ReadCloser, error) {
-	if g.Snapshots == nil {
-		return streams.ReadAt(streamName, 0), nil
-	}
-
-	aggNames := make([]string, 0, len(g.setFields))
-	for _, f := range g.setFields {
-		aggNames = append(aggNames, f.aggName)
-	}
-	offset, err := snapshot.LastCommon(g.Snapshots, aggNames...)
-	if err != nil {
-		return nil, err
-	}
-	if offset == 0 {
-		return streams.ReadAt(streamName, 0), nil
-	}
-
-	errs := make(chan error, len(aggs))
-	for i := range aggs {
-		go func(i int) {
-			r, err := g.Snapshots.Open(aggNames[i], offset)
-			if err != nil {
-				errs <- err
-				return
-			}
-			err = aggs[i].LoadFrom(r)
-			r.Close()
-			errs <- err
-		}(i)
-	}
-
-	var errN int
-	for range aggs {
-		err := <-errs
-		if err != nil {
-			errN++
-			log.Print(err)
-		}
-	}
-	if errN != 0 {
-		return nil, fmt.Errorf("aggregate group synchronisation halt on %d snapshot recovery error(s)", errN)
-	}
-
-	return streams.ReadAt(streamName, offset), nil
 }
 
 func (g *LightGroup[AggregateSet]) fork(offset uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
