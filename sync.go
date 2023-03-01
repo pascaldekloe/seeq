@@ -206,7 +206,7 @@ func (g *Group[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs 
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
 	for {
-		lastReadTime, err := FeedEach(r, buf, aggs...)
+		lastReadTime, err := SyncEach(r, buf, aggs...)
 		if err != nil {
 			return fmt.Errorf("aggregate synchronization halt on input: %w", err)
 		}

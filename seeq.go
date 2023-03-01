@@ -67,9 +67,9 @@ func Clone(dest, src Transfering, p snapshot.Production) error {
 	return nil
 }
 
-// FeedEach sends batches from c to each Aggregate in order of their respective
-// argument position. The error comes from the stream.Reader with nil for EOF.
-func FeedEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+// SyncEach applies all entries from r to each Aggregate in argument order. Buf
+// defines the batch size for Read and AddNext. Error is nil on success-not EOF.
+func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
 	if len(buf) == 0 {
 		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
 	}
