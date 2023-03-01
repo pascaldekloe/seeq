@@ -39,7 +39,11 @@ func Copy[T any](dst, src Aggregate[T], p snapshot.Production) error {
 
 	// write snapshot into pipe
 	go func() {
-		pw.CloseWithError(src.DumpTo(pw))
+		err := src.DumpTo(pw)
+		if err == io.EOF {
+			err = fmt.Errorf("aggregate snapshot dump did %w", err)
+		}
+		pw.CloseWithError(err)
 	}()
 
 	var r io.Reader
