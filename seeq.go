@@ -18,27 +18,23 @@ type Aggregate[T any] interface {
 	// should be reported only. The stream must continue at all times.
 	AddNext(batch []T)
 
-	Dumper // produces a snapshot
-	Loader // resets to a snapshot
+	Transfering
 }
 
-// A Dumper can produce snapshots of its state (for a Loader).
-type Dumper interface {
+// A Transfering aggregate can produce snapshots of its state, and it can reset
+// to the state of a snapshot.
+type Transfering interface {
 	// DumpTo must be called on a read-only instance only.
 	DumpTo(io.Writer) error
-}
 
-// A Loader can reset to the state of a snapshot (from a Dumper).
-type Loader interface {
-	// LoadFrom must execute in isolation. Errors leave the Loader in an
-	// undefined state. No methods other than Shutdown shall be invoked
-	// after error.
+	// LoadFrom must execute in isolation. Errors leave the aggregate in an
+	// undefined state.
 	LoadFrom(io.Reader) error
 }
 
 // Clone copies the state from src into dest. Snapshot Production is optional.
 // Clone does not Commit nor Abort the Production.
-func Clone(dest Loader, src Dumper, p snapshot.Production) error {
+func Clone(dest, src Transfering, p snapshot.Production) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
