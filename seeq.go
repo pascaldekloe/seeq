@@ -9,29 +9,31 @@ import (
 )
 
 // An Aggregate consumes a stream of T—typically stream.Entry—for one or more
-// specific queries.
+// specific queries. Such queries may be served with exported fields and/or
+// methods. The specifics are entirely up to the user and they are beyond the
+// scope of this interface.
+//
+// Both LoadFrom and AddNext must execute in isolation. DumpTo is considdered to
+// be a read-only operation. Therefore, DumpTo can be invoked simultaneously
+// with other query methods (from multiple goroutines).
 type Aggregate[T any] interface {
 	// AddNext consumes a stream in chronological order. Malformed content
 	// should be reported only. The stream must continue at all times.
 	AddNext(batch []T)
 
-	Transfering
-}
-
-// A Transfering aggregate can produce snapshots of its state, and it can reset
-// to the state of a snapshot.
-type Transfering interface {
-	// DumpTo must be called on a read-only instance only.
+	// DumpTo produces a snapshot/serial/backup of the Aggregate's state.
+	// When the implementation makes use of third-party storage such as a
+	// database, then the snapshot should include the stored content too.
 	DumpTo(io.Writer) error
 
-	// LoadFrom must execute in isolation. Errors leave the aggregate in an
-	// undefined state.
+	// LoadFrom resets the Aggregate state to a snapshot from DumpTo.
+	// Errors may leave the Aggregate in an undefined state.
 	LoadFrom(io.Reader) error
 }
 
 // Copy the state from src into dst. Snapshot Production may be nil. Copy does
 // not Commit nor Abort the Production.
-func Copy(dst, src Transfering, p snapshot.Production) error {
+func Copy[T any](dst, src Aggregate[T], p snapshot.Production) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
