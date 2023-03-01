@@ -124,10 +124,10 @@ func NewGroup[Aggs any](constructor func() (*Aggs, error)) (*Group[Aggs], error)
 	return &g, nil
 }
 
-// ErrInterrupt is the result of an Intterupt call on a synchronisation group.
+// ErrInterrupt is the result of an Interrupt request.
 var ErrInterrupt = errors.New("aggregate synchronisation received an interrupt")
 
-// Interrupt halts synchronisation with ErrInterrupt.
+// Interrupt halts any ongoing synchronisation with ErrInterrupt.
 func (g *Group[Aggs]) Interrupt() {
 	select {
 	case g.interrupt <- struct{}{}:
@@ -139,6 +139,12 @@ func (g *Group[Aggs]) Interrupt() {
 
 // SyncFrom a stream until failure.
 func (g *Group[Aggs]) SyncFrom(r stream.Reader) error {
+	// clear any pending interrupt request
+	select {
+	case <-g.interrupt:
+	default:
+	}
+
 	// instantiate working copy
 	set, aggs, err := g.fork(0, nil)
 	if err != nil {
@@ -150,6 +156,12 @@ func (g *Group[Aggs]) SyncFrom(r stream.Reader) error {
 
 // SyncFromRepo until failure.
 func (g *Group[Aggs]) SyncFromRepo(streams stream.Repo, streamName string) error {
+	// clear any pending interrupt request
+	select {
+	case <-g.interrupt:
+	default:
+	}
+
 	if g.Snapshots == nil {
 		return g.SyncFrom(streams.ReadAt(streamName, 0))
 	}
