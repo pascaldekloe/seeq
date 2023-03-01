@@ -15,8 +15,8 @@ import (
 
 // Fix contains aggregates that are ready to serve queries. No more stream input
 // shall be applied.
-type Fix[AggregateSet any] struct {
-	Aggs *AggregateSet // read-only
+type Fix[Aggs any] struct {
+	Aggs *Aggs // read-only
 
 	// Offset is stream position. The value matches the number of stream
 	// entries applied to each aggregate in Aggs.
@@ -30,14 +30,14 @@ var aggregateType = reflect.TypeOf(struct{ Aggregate[stream.Entry] }{}).Field(0)
 
 type aggregateField struct {
 	index   int    // struct position
-	aggName string // unique label
+	aggName string // user label
 }
 
-// AggregateSetFields validates the configuration and it returns the fields
-// tagged as aggregate.
-func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
+// AggregateFields validates the configuration and it returns each field tagged
+// as aggregate.
+func aggregateFields(setType reflect.Type) ([]aggregateField, error) {
 	if k := setType.Kind(); k != reflect.Struct {
-		return nil, fmt.Errorf("aggregate set %s is of kind %s, need %s", setType, k, reflect.Struct)
+		return nil, fmt.Errorf("%s is of kind %s, need %s", setType, k, reflect.Struct)
 	}
 
 	var found []aggregateField
@@ -57,17 +57,17 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 		}
 
 		if !field.IsExported() {
-			return nil, fmt.Errorf("aggregate set %s field %s is not exported", setType, field.Name)
+			return nil, fmt.Errorf("%s field %s is not exported", setType, field.Name)
 		}
 		if !field.Type.Implements(aggregateType) {
-			return nil, fmt.Errorf("aggregate set %s field %s type %s does not implement %s", setType, field.Name, field.Type, aggregateType)
+			return nil, fmt.Errorf("%s field %s type %s does not implement %s", setType, field.Name, field.Type, aggregateType)
 		}
 
 		found = append(found, aggregateField{i, name})
 	}
 
 	if len(found) == 0 {
-		return nil, fmt.Errorf("aggregate set %s has no aggregate tags", setType)
+		return nil, fmt.Errorf("%s has no aggregate tags", setType)
 	}
 
 	// duplicate name check
@@ -75,7 +75,7 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 	for _, f := range found {
 		previous, ok := indexPerName[f.aggName]
 		if ok {
-			return nil, fmt.Errorf("aggregate set %s has both field %s and field %s tagged as %q",
+			return nil, fmt.Errorf("%s has both field %s and field %s tagged as %q",
 				setType, setType.Field(previous).Name, setType.Field(f.index).Name, f.aggName)
 		}
 		indexPerName[f.aggName] = f.index
@@ -84,39 +84,39 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 	return found, nil
 }
 
-// Group manages a set of aggregates together as a group. The AggregateSet must
-// be a struct with one or more of its fields tagged as `aggregate:"agg_name"`.
-// The aggregate fields must implement the Aggregate[stream.Entry] interface.
-type Group[AggregateSet any] struct {
-	constructor func() (*AggregateSet, error)
+// Group manages a set of aggregates together as a group. Aggs must be a struct
+// with one or more of its fields tagged as `aggregate:"some_name"`. Any of such
+// fields must implement the Aggregate[stream.Entry] interface.
+type Group[Aggs any] struct {
+	constructor func() (*Aggs, error)
 
 	setFields []aggregateField
 
 	// latest singleton, or nil initially
-	live chan *Fix[AggregateSet]
+	live chan *Fix[Aggs]
 	// working copy handover
-	release chan Fix[AggregateSet]
+	release chan Fix[Aggs]
 	// halts synchronisation
 	interrupt chan struct{}
 
 	Snapshots snapshot.Archive // optional
 }
 
-// NewGroup validates the AggregateSet configuration before returning a new
-// installation. Constructor must return each aggregate in its initial state,
-// i.e., the AggregateSet must match stream offset zero.
-func NewGroup[AggregateSet any](constructor func() (*AggregateSet, error)) (*Group[AggregateSet], error) {
-	// read & validate AggregateSet structure
-	fields, err := aggregateSetFields(reflect.TypeOf((*AggregateSet)(nil)).Elem())
+// NewGroup validates the Aggs configuration before returning a new setup.
+// Constructor must return each aggregate in its initial state, i.e., the Aggs
+// must match stream offset zero.
+func NewGroup[Aggs any](constructor func() (*Aggs, error)) (*Group[Aggs], error) {
+	// read & validate configuration
+	fields, err := aggregateFields(reflect.TypeOf((*Aggs)(nil)).Elem())
 	if err != nil {
 		return nil, err
 	}
 
-	g := Group[AggregateSet]{
+	g := Group[Aggs]{
 		constructor: constructor,
 		setFields:   fields,
-		live:        make(chan *Fix[AggregateSet], 1),
-		release:     make(chan Fix[AggregateSet]),
+		live:        make(chan *Fix[Aggs], 1),
+		release:     make(chan Fix[Aggs]),
 		interrupt:   make(chan struct{}, 1),
 	}
 	g.live <- nil // initial placeholder
@@ -128,7 +128,7 @@ func NewGroup[AggregateSet any](constructor func() (*AggregateSet, error)) (*Gro
 var ErrInterrupt = errors.New("aggregate synchronisation received an interrupt")
 
 // Interrupt halts synchronisation with ErrInterrupt.
-func (g *Group[AggregateSet]) Interrupt() {
+func (g *Group[Aggs]) Interrupt() {
 	select {
 	case g.interrupt <- struct{}{}:
 		break // signal installed
@@ -138,7 +138,7 @@ func (g *Group[AggregateSet]) Interrupt() {
 }
 
 // SyncFrom a stream until failure.
-func (g *Group[AggregateSet]) SyncFrom(r stream.Reader) error {
+func (g *Group[Aggs]) SyncFrom(r stream.Reader) error {
 	// instantiate working copy
 	set, aggs, err := g.fork(0, nil)
 	if err != nil {
@@ -149,7 +149,7 @@ func (g *Group[AggregateSet]) SyncFrom(r stream.Reader) error {
 }
 
 // SyncFromRepo until failure.
-func (g *Group[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName string) error {
+func (g *Group[Aggs]) SyncFromRepo(streams stream.Repo, streamName string) error {
 	if g.Snapshots == nil {
 		return g.SyncFrom(streams.ReadAt(streamName, 0))
 	}
@@ -201,7 +201,7 @@ func (g *Group[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName strin
 	return g.syncFrom(streams.ReadAt(streamName, offset), set, aggs)
 }
 
-func (g *Group[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs []Aggregate[stream.Entry]) error {
+func (g *Group[Aggs]) syncFrom(r stream.Reader, set *Aggs, aggs []Aggregate[stream.Entry]) error {
 	// once live the Fix is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
@@ -221,7 +221,7 @@ func (g *Group[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs 
 		select {
 		case <-offerTimer.C:
 			break // no demand
-		case g.release <- Fix[AggregateSet]{Aggs: set, Offset: r.Offset(), LiveAt: lastReadTime}:
+		case g.release <- Fix[Aggs]{Aggs: set, Offset: r.Offset(), LiveAt: lastReadTime}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}
@@ -237,7 +237,7 @@ func (g *Group[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs 
 	}
 }
 
-func (g *Group[AggregateSet]) fork(offset uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
+func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs, []Aggregate[stream.Entry], error) {
 	set, err := g.constructor()
 	if err != nil {
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
@@ -325,10 +325,10 @@ var ErrLiveFuture = errors.New("aggregate from future not available")
 
 // LiveSince returns aggregates no older than notBefore. The notBefore range is
 // protected with ErrLiveFuture.
-func (g *Group[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[AggregateSet], error) {
+func (g *Group[Aggs]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[Aggs], error) {
 	tolerance := time.Since(notBefore)
 	if tolerance < 0 {
-		return Fix[AggregateSet]{}, ErrLiveFuture
+		return Fix[Aggs]{}, ErrLiveFuture
 	}
 
 	ctxDone := ctx.Done()
@@ -344,7 +344,7 @@ func (g *Group[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time
 			return *fix, nil
 		}
 	case <-ctxDone:
-		return Fix[AggregateSet]{}, ctx.Err()
+		return Fix[Aggs]{}, ctx.Err()
 	}
 
 	for {
@@ -359,7 +359,7 @@ func (g *Group[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time
 			return fix, nil
 		case <-ctxDone:
 			g.live <- nil // unlock [waste for nothing]
-			return Fix[AggregateSet]{}, ctx.Err()
+			return Fix[Aggs]{}, ctx.Err()
 		}
 	}
 }

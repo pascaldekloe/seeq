@@ -16,7 +16,7 @@ func TestGroupConfigError(t *testing.T) {
 		if err == nil {
 			t.Error("no error")
 		}
-		const want = "aggregate set seeq_test.FaultyConfig has no aggregate tags"
+		const want = "seeq_test.FaultyConfig has no aggregate tags"
 		if got := err.Error(); got != want {
 			t.Errorf("got error %q, want %q", got, want)
 		}
@@ -30,7 +30,7 @@ func TestGroupConfigError(t *testing.T) {
 		if err == nil {
 			t.Error("no error")
 		}
-		const want = "aggregate set seeq_test.FaultyConfig field Agg1 type string does not implement seeq.Aggregate[github.com/pascaldekloe/seeq/stream.Entry]"
+		const want = "seeq_test.FaultyConfig field Agg1 type string does not implement seeq.Aggregate[github.com/pascaldekloe/seeq/stream.Entry]"
 		if got := err.Error(); got != want {
 			t.Errorf("got error %q, want %q", got, want)
 		}
@@ -44,7 +44,7 @@ func TestGroupConfigError(t *testing.T) {
 		if err == nil {
 			t.Error("no error")
 		}
-		const want = "aggregate set seeq_test.FaultyConfig field agg1 is not exported"
+		const want = "seeq_test.FaultyConfig field agg1 is not exported"
 		if got := err.Error(); got != want {
 			t.Errorf("got error %q, want %q", got, want)
 		}
@@ -59,7 +59,7 @@ func TestGroupConfigError(t *testing.T) {
 		if err == nil {
 			t.Error("no error")
 		}
-		const want = "aggregate set seeq_test.FaultyConfig has both field Agg1 and field Agg2 tagged as \"test-agg\""
+		const want = "seeq_test.FaultyConfig has both field Agg1 and field Agg2 tagged as \"test-agg\""
 		if got := err.Error(); got != want {
 			t.Errorf("got error %q, want %q", got, want)
 		}
