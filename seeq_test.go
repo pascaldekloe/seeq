@@ -1,4 +1,4 @@
-package seeq
+package seeq_test
 
 import (
 	"encoding/json"
@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/pascaldekloe/seeq/stream"
-	"github.com/pascaldekloe/seeq/stream/streamtest"
 )
 
+// Recording is seeq.Aggregate for tests.
 type Recording []stream.Entry
 
 // AddNext implements the seeq.Aggregate interface.
@@ -47,35 +47,4 @@ func (rec Recording) VerifyEqual(t testing.TB, want ...stream.Entry) (ok bool) {
 		}
 	}
 	return
-}
-
-func TestSyncAll(t *testing.T) {
-	tests := [][]stream.Entry{
-		{},
-		{{MediaType: "text/plain", Payload: []byte("foo")}},
-		{{}, {MediaType: "text/void"}, {}},
-	}
-
-	run := func(buf []stream.Entry) {
-		for _, test := range tests {
-			r := streamtest.NewFixedReader(test...)
-			rec1 := make(Recording, 0)
-			rec2 := make(Recording, 0)
-			_, err := SyncEach(r, buf, &rec1, &rec2)
-			if err != nil {
-				t.Errorf("got error %q for: %+v", err, test)
-				continue
-			}
-
-			rec1.VerifyEqual(t, test...)
-			rec2.VerifyEqual(t, test...)
-		}
-	}
-
-	t.Run("Singles", func(t *testing.T) {
-		run(make([]stream.Entry, 1))
-	})
-	t.Run("Batch2", func(t *testing.T) {
-		run(make([]stream.Entry, 2))
-	})
 }

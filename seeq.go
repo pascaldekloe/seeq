@@ -2,13 +2,10 @@
 package seeq
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/pascaldekloe/seeq/snapshot"
-	"github.com/pascaldekloe/seeq/stream"
 )
 
 // An Aggregate consumes a stream of T—typically stream.Entry—for one or more
@@ -65,34 +62,4 @@ func Clone(dest, src Transfering, p snapshot.Production) error {
 	}
 
 	return nil
-}
-
-// SyncEach applies all entries from r to each Aggregate in argument order. Buf
-// defines the batch size for Read and AddNext. Error is nil on success-not EOF.
-func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
-	if len(buf) == 0 {
-		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
-	}
-
-	for {
-		n, err := r.Read(buf)
-		if err == io.EOF {
-			lastRead = time.Now()
-		}
-
-		if n > 0 {
-			for i := range aggs {
-				aggs[i].AddNext(buf[:n])
-			}
-		}
-
-		switch err {
-		case nil:
-			continue
-		case io.EOF:
-			return lastRead, nil
-		default:
-			return lastRead, err
-		}
-	}
 }

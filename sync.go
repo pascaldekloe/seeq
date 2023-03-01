@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"reflect"
 	"strings"
@@ -12,6 +13,36 @@ import (
 	"github.com/pascaldekloe/seeq/snapshot"
 	"github.com/pascaldekloe/seeq/stream"
 )
+
+// SyncEach applies all entries from r to each Aggregate in argument order. Buf
+// defines the batch size for Read and AddNext. Error is nil on success-not EOF.
+func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+	if len(buf) == 0 {
+		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
+	}
+
+	for {
+		n, err := r.Read(buf)
+		if err == io.EOF {
+			lastRead = time.Now()
+		}
+
+		if n > 0 {
+			for i := range aggs {
+				aggs[i].AddNext(buf[:n])
+			}
+		}
+
+		switch err {
+		case nil:
+			continue
+		case io.EOF:
+			return lastRead, nil
+		default:
+			return lastRead, err
+		}
+	}
+}
 
 // Fix contains aggregates that are ready to serve queries. No more stream input
 // shall be applied.
