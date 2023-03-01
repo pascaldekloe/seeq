@@ -27,6 +27,11 @@ func (dir fileDir) Open(name string, offset uint64) (io.ReadCloser, error) {
 
 // Make implements the Archive interface.
 func (dir fileDir) Make(name string, offset uint64) (Production, error) {
+	err := os.MkdirAll(string(dir), 0o750)
+	if err != nil {
+		return nil, err
+	}
+
 	// validate name
 	path := filepath.Join(string(dir), fmt.Sprintf("%s-%016X.spool", name, offset))
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o640)
@@ -88,6 +93,9 @@ func (p fileProduction) Abort() error {
 func (dir fileDir) History(name string) ([]uint64, error) {
 	entries, err := os.ReadDir(string(dir))
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var history []uint64
