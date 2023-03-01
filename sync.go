@@ -57,7 +57,7 @@ func aggregateFields(setType reflect.Type) ([]aggregateField, error) {
 		}
 
 		if !field.IsExported() {
-			return nil, fmt.Errorf("%s field %s is not exported", setType, field.Name)
+			return nil, fmt.Errorf("%s field %s is not exported [title-case]", setType, field.Name)
 		}
 		if !field.Type.Implements(aggregateType) {
 			return nil, fmt.Errorf("%s field %s type %s does not implement %s", setType, field.Name, field.Type, aggregateType)

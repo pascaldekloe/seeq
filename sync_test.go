@@ -4,12 +4,25 @@ import (
 	"testing"
 
 	"github.com/pascaldekloe/seeq"
+	"github.com/pascaldekloe/seeq/stream"
 )
 
 func minimialConstructor[T any]() (*T, error) { return new(T), nil }
 
-// TestGroupConfigError seals user-friendly errors.
-func TestGroupConfigError(t *testing.T) {
+// TestGroupError seals user-friendly errors.
+func TestGroupError(t *testing.T) {
+	t.Run("NotStruct", func(t *testing.T) {
+		type FaultyConfig []seeq.Aggregate[stream.Entry]
+		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
+		if err == nil {
+			t.Error("no error")
+		}
+		const want = "seeq_test.FaultyConfig is of kind slice, need struct"
+		if got := err.Error(); got != want {
+			t.Errorf("got error %q, want %q", got, want)
+		}
+	})
+
 	t.Run("NoAggs", func(t *testing.T) {
 		type FaultyConfig struct{ Foo *WORMStats }
 		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
@@ -44,7 +57,7 @@ func TestGroupConfigError(t *testing.T) {
 		if err == nil {
 			t.Error("no error")
 		}
-		const want = "seeq_test.FaultyConfig field agg1 is not exported"
+		const want = "seeq_test.FaultyConfig field agg1 is not exported [title-case]"
 		if got := err.Error(); got != want {
 			t.Errorf("got error %q, want %q", got, want)
 		}
