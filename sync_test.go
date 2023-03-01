@@ -12,7 +12,7 @@ func minimialConstructor[T any]() (*T, error) { return new(T), nil }
 func TestGroupConfigError(t *testing.T) {
 	t.Run("NoAggs", func(t *testing.T) {
 		type FaultyConfig struct{ Foo *WORMStats }
-		_, err := seeq.NewLightGroup(minimialConstructor[FaultyConfig])
+		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
 		if err == nil {
 			t.Error("no error")
 		}
@@ -26,7 +26,7 @@ func TestGroupConfigError(t *testing.T) {
 		type FaultyConfig struct {
 			Agg1 string `aggregate:"test-agg"`
 		}
-		_, err := seeq.NewLightGroup(minimialConstructor[FaultyConfig])
+		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
 		if err == nil {
 			t.Error("no error")
 		}
@@ -40,7 +40,7 @@ func TestGroupConfigError(t *testing.T) {
 		type FaultyConfig struct {
 			agg1 string `aggregate:"test-agg"`
 		}
-		_, err := seeq.NewLightGroup(minimialConstructor[FaultyConfig])
+		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
 		if err == nil {
 			t.Error("no error")
 		}
@@ -55,7 +55,7 @@ func TestGroupConfigError(t *testing.T) {
 			Agg1 *WORMStats `aggregate:"test-agg"`
 			Agg2 *WORMCheck `aggregate:"test-agg"`
 		}
-		_, err := seeq.NewLightGroup(minimialConstructor[FaultyConfig])
+		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
 		if err == nil {
 			t.Error("no error")
 		}

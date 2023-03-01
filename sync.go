@@ -84,16 +84,11 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 	return found, nil
 }
 
-// LightGroup feeds a single AggregateSet sequentially. Whenever a Live method
-// expires its current Fix, then the update singleton gets used next. The
-// Sync method creates a new clone from a new snapshot to continue with. This
-// setup works well for states with fast snapshot handling [Dumper & Loader].
-//
-// The AggregateSet must be a struct with one or more of its fields tagged as
-// "aggregate". Each field tagged as aggregate must implement the Aggregate
-// interface.
-type LightGroup[AggregateSet any] struct {
-	newSet func() (*AggregateSet, error) // constructor
+// Group manages a set of aggregates together as a group. The AggregateSet must
+// be a struct with one or more of its fields tagged as `aggregate:"agg_name"`.
+// The aggregate fields must implement the Aggregate[stream.Entry] interface.
+type Group[AggregateSet any] struct {
+	constructor func() (*AggregateSet, error)
 
 	setFields []aggregateField
 
@@ -107,22 +102,22 @@ type LightGroup[AggregateSet any] struct {
 	Snapshots snapshot.Archive // optional
 }
 
-// NewLightGroup returns a new installation that must be fed with the SyncFrom
-// method in order to use any of the Live methods. NewSet is expected to return
-// empty sets ready for use.
-func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*LightGroup[AggregateSet], error) {
+// NewGroup validates the AggregateSet configuration before returning a new
+// installation. Constructor must return each aggregate in its initial state,
+// i.e., the AggregateSet must match stream offset zero.
+func NewGroup[AggregateSet any](constructor func() (*AggregateSet, error)) (*Group[AggregateSet], error) {
 	// read & validate AggregateSet structure
 	fields, err := aggregateSetFields(reflect.TypeOf((*AggregateSet)(nil)).Elem())
 	if err != nil {
 		return nil, err
 	}
 
-	g := LightGroup[AggregateSet]{
-		newSet:    newSet,
-		setFields: fields,
-		live:      make(chan *Fix[AggregateSet], 1),
-		release:   make(chan Fix[AggregateSet]),
-		interrupt: make(chan struct{}, 1),
+	g := Group[AggregateSet]{
+		constructor: constructor,
+		setFields:   fields,
+		live:        make(chan *Fix[AggregateSet], 1),
+		release:     make(chan Fix[AggregateSet]),
+		interrupt:   make(chan struct{}, 1),
 	}
 	g.live <- nil // initial placeholder
 
@@ -133,7 +128,7 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 var ErrInterrupt = errors.New("aggregate synchronisation received an interrupt")
 
 // Interrupt halts synchronisation with ErrInterrupt.
-func (g *LightGroup[AggregateSet]) Interrupt() {
+func (g *Group[AggregateSet]) Interrupt() {
 	select {
 	case g.interrupt <- struct{}{}:
 		break // signal installed
@@ -143,7 +138,7 @@ func (g *LightGroup[AggregateSet]) Interrupt() {
 }
 
 // SyncFrom a stream until failure.
-func (g *LightGroup[AggregateSet]) SyncFrom(r stream.Reader) error {
+func (g *Group[AggregateSet]) SyncFrom(r stream.Reader) error {
 	// instantiate working copy
 	set, aggs, err := g.fork(0, nil)
 	if err != nil {
@@ -154,7 +149,7 @@ func (g *LightGroup[AggregateSet]) SyncFrom(r stream.Reader) error {
 }
 
 // SyncFromRepo until failure.
-func (g *LightGroup[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName string) error {
+func (g *Group[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName string) error {
 	if g.Snapshots == nil {
 		return g.SyncFrom(streams.ReadAt(streamName, 0))
 	}
@@ -206,7 +201,7 @@ func (g *LightGroup[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName 
 	return g.syncFrom(streams.ReadAt(streamName, offset), set, aggs)
 }
 
-func (g *LightGroup[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs []Aggregate[stream.Entry]) error {
+func (g *Group[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs []Aggregate[stream.Entry]) error {
 	// once live the Fix is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
@@ -242,8 +237,8 @@ func (g *LightGroup[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, 
 	}
 }
 
-func (g *LightGroup[AggregateSet]) fork(offset uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
-	set, err := g.newSet()
+func (g *Group[AggregateSet]) fork(offset uint64, old []Aggregate[stream.Entry]) (*AggregateSet, []Aggregate[stream.Entry], error) {
+	set, err := g.constructor()
 	if err != nil {
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
 	}
@@ -328,8 +323,9 @@ func (g *LightGroup[AggregateSet]) fork(offset uint64, old []Aggregate[stream.En
 // ErrLiveFuture denies freshness.
 var ErrLiveFuture = errors.New("aggregate from future not available")
 
-// LiveSince returns aggregates no older than notBefore.
-func (g *LightGroup[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[AggregateSet], error) {
+// LiveSince returns aggregates no older than notBefore. The notBefore range is
+// protected with ErrLiveFuture.
+func (g *Group[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[AggregateSet], error) {
 	tolerance := time.Since(notBefore)
 	if tolerance < 0 {
 		return Fix[AggregateSet]{}, ErrLiveFuture

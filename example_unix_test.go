@@ -34,7 +34,7 @@ func Example() {
 		return
 	}
 
-	group, err := seeq.NewLightGroup(NewWORMAggs)
+	group, err := seeq.NewGroup(NewWORMAggs)
 	if err != nil {
 		fmt.Println("illegal setup:", err)
 		return

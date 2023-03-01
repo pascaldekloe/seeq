@@ -96,23 +96,24 @@ type RFCSeries struct {
 	Abstracts *fulltext.Index `aggregate:"rfc-abstract"`
 }
 
-// NewRFCSeries returns a new set of empty aggregates ready for use.
+// NewRFCSeries returns a new set of aggregates.
 func NewRFCSeries() (*RFCSeries, error) {
+	// initialize/construct each aggregate
 	…
 }
 ```
 
-For example, a `seeq.NewLightGroup[RFCSeries](NewRFCSeries)` feeds each tagged
-field. A live copy is aquired with a freshness constraint.
+The example above can be installed with `seeq.NewGroup(NewRFCSeries)`.
 
 ```go
-	// get aggregates which were live no longer than a minute ago
+	// resolve aggregates no older than a minute ago
 	fix, err := group.LiveSince(ctx, time.Now().Add(-time.Minute))
 	if err != nil {
 		log.Print("context expired during aggregate aquire")
 		return
 	}
 
+	// query the read-only fix; note the absense of errors
 	log.Printf("all aggregates from %T are at offset %d", fix.Aggs, fix.Offset)
 	log.Print("got %d RFC authors", fix.Aggs.Authors.N)
 	log.Print("got %d references to RFC 2616", len(fix.Aggs.Refs.PerRFC[2616].Inbound))
