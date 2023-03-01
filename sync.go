@@ -310,7 +310,7 @@ func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs,
 				}
 			}
 
-			err := Clone(aggs[i], old[i], prod)
+			err := Copy(aggs[i], old[i], prod)
 			done <- err
 
 			switch {

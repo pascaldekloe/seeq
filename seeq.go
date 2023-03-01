@@ -29,9 +29,9 @@ type Transfering interface {
 	LoadFrom(io.Reader) error
 }
 
-// Clone copies the state from src into dest. Snapshot Production is optional.
-// Clone does not Commit nor Abort the Production.
-func Clone(dest, src Transfering, p snapshot.Production) error {
+// Copy the state from src into dst. Snapshot Production may be nil. Copy does
+// not Commit nor Abort the Production.
+func Copy(dst, src Transfering, p snapshot.Production) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -48,7 +48,7 @@ func Clone(dest, src Transfering, p snapshot.Production) error {
 	}
 
 	// load receives errors from src and w through the pipe
-	err := dest.LoadFrom(r)
+	err := dst.LoadFrom(r)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func Clone(dest, src Transfering, p snapshot.Production) error {
 	case err != nil:
 		return fmt.Errorf("aggregate %T snapshot dump after load: %w", src, err)
 	case n != 0:
-		return fmt.Errorf("aggregate %T left %d bytes after snapshot load", dest, n)
+		return fmt.Errorf("aggregate %T left %d bytes after snapshot load", dst, n)
 	}
 
 	return nil
