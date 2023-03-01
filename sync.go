@@ -13,17 +13,16 @@ import (
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// QuerySet contains aggregates with any and all entries from an input stream
-// applied at some point in time. The AggregateSet is ready to serve queries.
-// No more updates shall be applied.
-type QuerySet[AggregateSet any] struct {
+// Fix contains aggregates that are ready to serve queries. No more stream input
+// shall be applied.
+type Fix[AggregateSet any] struct {
 	Aggs *AggregateSet // read-only
 
 	// Offset is stream position. The value matches the number of stream
 	// entries applied to each aggregate in Aggs.
 	Offset uint64
 
-	// Live is defined as the latest EOF read from the input stream.
+	// Live is when the input stream was consumed in full.
 	LiveAt time.Time
 }
 
@@ -86,7 +85,7 @@ func aggregateSetFields(setType reflect.Type) ([]aggregateField, error) {
 }
 
 // LightGroup feeds a single AggregateSet sequentially. Whenever a Live method
-// expires its current QuerySet, then the update singleton gets used next. The
+// expires its current Fix, then the update singleton gets used next. The
 // Sync method creates a new clone from a new snapshot to continue with. This
 // setup works well for states with fast snapshot handling [Dumper & Loader].
 //
@@ -99,9 +98,9 @@ type LightGroup[AggregateSet any] struct {
 	setFields []aggregateField
 
 	// latest singleton, or nil initially
-	live chan *QuerySet[AggregateSet]
+	live chan *Fix[AggregateSet]
 	// working copy handover
-	release chan QuerySet[AggregateSet]
+	release chan Fix[AggregateSet]
 	// halts synchronisation
 	interrupt chan struct{}
 
@@ -121,8 +120,8 @@ func NewLightGroup[AggregateSet any](newSet func() (*AggregateSet, error)) (*Lig
 	g := LightGroup[AggregateSet]{
 		newSet:    newSet,
 		setFields: fields,
-		live:      make(chan *QuerySet[AggregateSet], 1),
-		release:   make(chan QuerySet[AggregateSet]),
+		live:      make(chan *Fix[AggregateSet], 1),
+		release:   make(chan Fix[AggregateSet]),
 		interrupt: make(chan struct{}, 1),
 	}
 	g.live <- nil // initial placeholder
@@ -208,7 +207,7 @@ func (g *LightGroup[AggregateSet]) SyncFromRepo(streams stream.Repo, streamName 
 }
 
 func (g *LightGroup[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, aggs []Aggregate[stream.Entry]) error {
-	// once live the QuerySet is offered to release
+	// once live the Fix is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
 	for {
@@ -227,7 +226,7 @@ func (g *LightGroup[AggregateSet]) syncFrom(r stream.Reader, set *AggregateSet, 
 		select {
 		case <-offerTimer.C:
 			break // no demand
-		case g.release <- QuerySet[AggregateSet]{Aggs: set, Offset: r.Offset(), LiveAt: lastReadTime}:
+		case g.release <- Fix[AggregateSet]{Aggs: set, Offset: r.Offset(), LiveAt: lastReadTime}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}
@@ -330,41 +329,41 @@ func (g *LightGroup[AggregateSet]) fork(offset uint64, old []Aggregate[stream.En
 var ErrLiveFuture = errors.New("aggregate from future not available")
 
 // LiveSince returns aggregates no older than notBefore.
-func (g *LightGroup[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time) (QuerySet[AggregateSet], error) {
+func (g *LightGroup[AggregateSet]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[AggregateSet], error) {
 	tolerance := time.Since(notBefore)
 	if tolerance < 0 {
-		return QuerySet[AggregateSet]{}, ErrLiveFuture
+		return Fix[AggregateSet]{}, ErrLiveFuture
 	}
 
 	ctxDone := ctx.Done()
 	select {
-	case aggs := <-g.live:
+	case fix := <-g.live:
 		switch {
-		case aggs == nil:
+		case fix == nil:
 			break // discard placeholder
-		case aggs.LiveAt.Before(notBefore):
+		case fix.LiveAt.Before(notBefore):
 			break // discard expired
 		default:
-			g.live <- aggs // unlock singleton
-			return *aggs, nil
+			g.live <- fix // unlock singleton
+			return *fix, nil
 		}
 	case <-ctxDone:
-		return QuerySet[AggregateSet]{}, ctx.Err()
+		return Fix[AggregateSet]{}, ctx.Err()
 	}
 
 	for {
 		select {
-		case aggs := <-g.release:
-			if aggs.LiveAt.Before(notBefore) {
+		case fix := <-g.release:
+			if fix.LiveAt.Before(notBefore) {
 				continue // discard again
 				// Such unfortunate waste could be
 				// avoided with a feedback channel.
 			}
-			g.live <- &aggs // unlock
-			return aggs, nil
+			g.live <- &fix // unlock
+			return fix, nil
 		case <-ctxDone:
 			g.live <- nil // unlock [waste for nothing]
-			return QuerySet[AggregateSet]{}, ctx.Err()
+			return Fix[AggregateSet]{}, ctx.Err()
 		}
 	}
 }

@@ -107,15 +107,15 @@ field. A live copy is aquired with a freshness constraint.
 
 ```go
 	// get aggregates which were live no longer than a minute ago
-	q, err := group.LiveSince(ctx, time.Now().Add(-time.Minute))
+	fix, err := group.LiveSince(ctx, time.Now().Add(-time.Minute))
 	if err != nil {
 		log.Print("context expired during aggregate aquire")
 		return
 	}
 
-	log.Printf("all %T aggregates are at offset № %d", q.Aggs, q.Offset)
-	log.Print("got %d RFC authors", q.Aggs.Authors.N)
-	log.Print("got %d references to RFC 2616", len(q.Aggs.Refs.PerRFC[2616].Inbound))
+	log.Printf("all aggregates from %T are at offset %d", fix.Aggs, fix.Offset)
+	log.Print("got %d RFC authors", fix.Aggs.Authors.N)
+	log.Print("got %d references to RFC 2616", len(fix.Aggs.Refs.PerRFC[2616].Inbound))
 }
 ```
 
