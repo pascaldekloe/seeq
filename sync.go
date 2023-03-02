@@ -296,9 +296,8 @@ func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs,
 		return instance, aggs, nil
 	}
 
-	// copy snapshots of each aggregate
-	// buffer to preserve error order, if any
-	done := make(chan error, len(aggs))
+	// parallel Copy each aggregate
+	done := make(chan error, len(aggs)) // buffer preserves order
 	for i := range aggs {
 		go func(i int) {
 			var prod snapshot.Production
@@ -337,30 +336,11 @@ func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs,
 			errs = append(errs, err)
 		}
 	}
-
-	switch len(errs) {
-	case 0:
-		return instance, aggs, nil
-	case 1:
-		return nil, nil, errs[0]
+	err = errors.Join(errs...)
+	if err != nil {
+		return nil, nil, err
 	}
-	// try and dedupe
-	msgSet := make(map[string]struct{}, len(errs))
-	for _, err := range errs {
-		msgSet[err.Error()] = struct{}{}
-	}
-
-	firstMsg := errs[0].Error()
-	delete(msgSet, firstMsg)
-	if len(msgSet) == 0 {
-		return nil, nil, errs[0]
-	}
-
-	others := make([]string, 0, len(msgSet))
-	for s := range msgSet {
-		others = append(others, s)
-	}
-	return nil, nil, fmt.Errorf("%w; followed by %q", errs[0], others)
+	return instance, aggs, nil
 }
 
 // ErrLiveFuture denies freshness.
