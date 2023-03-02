@@ -104,7 +104,7 @@ func TestGroupError(t *testing.T) {
 		if err == nil {
 			t.Error("no error")
 		}
-		const want = "seeq_test.FaultyConfig has both field Agg1 and field Agg2 tagged as \"test-agg\""
+		const want = "seeq_test.FaultyConfig has both field Agg1 and field Agg2 named as aggregate \"test-agg\""
 		if got := err.Error(); got != want {
 			t.Errorf("got error %q, want %q", got, want)
 		}
