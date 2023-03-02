@@ -1,6 +1,7 @@
 package stream_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pascaldekloe/seeq/stream"
@@ -31,4 +32,22 @@ func TestDeepCopy(t *testing.T) {
 			}
 		}
 	}
+}
+
+func ExampleMediaType() {
+	// parse rich MIME
+	const sample = `application/hal+json;profile="https://example.com/v1"`
+	t := stream.CachedMediaType(sample)
+
+	fmt.Println("• type:", t.Type)
+	fmt.Println("• subtype:", t.Subtype)
+	fmt.Println("• suffix:", t.Suffix)
+	if v, found := t.Param("profile"); found {
+		fmt.Println("• profile:", v)
+	}
+	// Output:
+	// • type: application
+	// • subtype: hal
+	// • suffix: json
+	// • profile: https://example.com/v1
 }

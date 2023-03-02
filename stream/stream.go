@@ -4,6 +4,9 @@ package stream
 import (
 	"errors"
 	"io"
+	"mime"
+	"strings"
+	"sync"
 )
 
 // ErrSizeMax denies an Entry on size constraints.
@@ -68,6 +71,60 @@ type ReadCloser interface {
 type WriteCloser interface {
 	Writer
 	io.Closer
+}
+
+// MediaType is the decomposition a MIME definition.
+//
+// https://www.rfc-editor.org/rfc/rfc2045
+// https://www.iana.org/assignments/media-type-structured-suffix/media-type-structured-suffix.xml
+type MediaType struct {
+	Type, Subtype, Suffix string
+
+	params map[string]string
+}
+
+// ParseMediaType returns the interpretation on best-effort basis.
+func ParseMediaType(s string) MediaType {
+	var t MediaType
+	s, t.params, _ = mime.ParseMediaType(s)
+	t.Type, s, _ = strings.Cut(s, "/")
+	t.Subtype, t.Suffix, _ = strings.Cut(s, "+")
+	return t
+}
+
+// Param returns the value for a given attribute.
+func (t *MediaType) Param(attr string) (value string, found bool) {
+	value, found = t.params[attr]
+	return
+}
+
+var (
+	mediaTypeCacheLock sync.RWMutex
+	mediaTypeCache     map[string]MediaType
+)
+
+// CachedMediaType resolves or creates a cached instance.
+func CachedMediaType(s string) MediaType {
+	mediaTypeCacheLock.RLock()
+	t, ok := mediaTypeCache[s]
+	mediaTypeCacheLock.RUnlock()
+	if ok {
+		return t
+	}
+
+	mediaTypeCacheLock.Lock()
+	defer mediaTypeCacheLock.Unlock()
+	// retry in write lock
+	t, ok = mediaTypeCache[s]
+	if !ok {
+		t = ParseMediaType(s)
+		// lazy init
+		if mediaTypeCache == nil {
+			mediaTypeCache = make(map[string]MediaType)
+		}
+		mediaTypeCache[s] = t
+	}
+	return t
 }
 
 // MediaTypes is a string set used to deduplicate memory.
