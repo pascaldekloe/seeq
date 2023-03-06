@@ -10,16 +10,19 @@ import (
 
 // An Aggregate consumes a stream of T—typically stream.Entry—for one or more
 // specific queries. Such queries may be served with exported fields and/or
-// methods. The specifics are entirely up to the user and they are beyond the
-// scope of this interface.
+// methods. The specifics are beyond the scope of this interface.
 //
-// Both LoadFrom and AddNext must execute in isolation. DumpTo is considdered to
-// be a read-only operation. Therefore, DumpTo can be invoked simultaneously
-// with other query methods (from multiple goroutines).
+// Both LoadFrom and AddNext shall execute in isolation. DumpTo is considdered
+// to be a read-only operation. Therefore, DumpTo can be invoked simultaneously
+// (from multiple goroutines) with any query methods.
 type Aggregate[T any] interface {
 	// AddNext consumes a stream in chronological order. Malformed content
-	// should be reported only. The stream must continue at all times.
-	AddNext(batch []T)
+	// should be reported only. The stream must continue at all times. Any
+	// error return is fatal to the Aggregate.
+	//
+	// Offset counts the number of entries passed before batch, since the
+	// very beginning of the stream.
+	AddNext(batch []T, offset uint64) error
 
 	// DumpTo produces a snapshot/serial/backup of the Aggregate's state.
 	// When the implementation makes use of third-party storage such as a

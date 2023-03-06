@@ -22,6 +22,7 @@ func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entr
 	}
 
 	for {
+		offset := r.Offset()
 		n, err := r.Read(buf)
 		if err == io.EOF {
 			lastRead = time.Now()
@@ -29,7 +30,10 @@ func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entr
 
 		if n > 0 {
 			for i := range aggs {
-				aggs[i].AddNext(buf[:n])
+				err = aggs[i].AddNext(buf[:n], offset)
+				if err != nil {
+					return time.Time{}, fmt.Errorf("aggregate synchronisation halt at stream entry № %d: %w", offset+uint64(i)+1, err)
+				}
 			}
 		}
 

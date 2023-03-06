@@ -15,8 +15,12 @@ import (
 type Recording []stream.Entry
 
 // AddNext implements the seeq.Aggregate interface.
-func (rec *Recording) AddNext(batch []stream.Entry) {
+func (rec *Recording) AddNext(batch []stream.Entry, offset uint64) error {
+	if offset != uint64(len(*rec)) {
+		return fmt.Errorf("recording aggregate got offset %d, want %d", offset, len(*rec))
+	}
 	*rec = append(*rec, stream.DeepCopy(batch...)...)
+	return nil
 }
 
 // DumpTo implements the seeq.Aggregate interface.
@@ -60,7 +64,7 @@ type FailingSnapshot struct {
 }
 
 // AddNext implements the seeq.Aggregate interface.
-func (fail FailingSnapshot) AddNext(batch []stream.Entry) { }
+func (fail FailingSnapshot) AddNext(batch []stream.Entry, offset uint64) error { return nil }
 
 // DumpTo implements the seeq.Aggregate interface.
 func (fail FailingSnapshot) DumpTo(w io.Writer) error {

@@ -56,7 +56,7 @@ func TestGroupError(t *testing.T) {
 	})
 
 	t.Run("NoAggs", func(t *testing.T) {
-		type FaultyConfig struct{ Foo *WORMStats }
+		type FaultyConfig struct{ Foo *TextStats }
 		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
 		if err == nil {
 			t.Error("no error")
@@ -97,8 +97,8 @@ func TestGroupError(t *testing.T) {
 
 	t.Run("NameDupe", func(t *testing.T) {
 		type FaultyConfig struct {
-			Agg1 *WORMStats `aggregate:"test-agg"`
-			Agg2 *WORMCheck `aggregate:"test-agg"`
+			Agg1 *TextStats `aggregate:"test-agg"`
+			Agg2 *Recording `aggregate:"test-agg"`
 		}
 		_, err := seeq.NewGroup(minimialConstructor[FaultyConfig])
 		if err == nil {

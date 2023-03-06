@@ -1,91 +1,157 @@
 package seeq_test
 
 import (
-	"crypto"
-	"encoding/gob"
+	"encoding/binary"
 	"encoding/json"
-	"hash"
 	"io"
+	"log"
+	"os"
+	"runtime"
+	"time"
 
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// WORMAggs demonstrates a collection of two aggregates.
-type WORMAggs struct {
-	Stats  *WORMStats `aggregate:"demo-stats"`
-	Crypto *WORMCheck `aggregate:"demo-crypto"`
+// DemoAggs demonstrates a collection of two aggregates.
+type DemoAggs struct {
+	*TextStats  `aggregate:"demo-inmemory"`
+	*EventTimes `aggregate:"demo-database"`
 }
 
-// NewWORMAggs returns the aggregate collection for stream-offset zero.
-func NewWORMAggs() (*WORMAggs, error) {
-	return &WORMAggs{
-		Stats:  new(WORMStats),
-		Crypto: NewSecureWORMCheck(crypto.SHA256),
-	}, nil
+// NewDemoAggs returns the aggregate collection for stream-offset zero.
+func NewDemoAggs() (*DemoAggs, error) {
+	times, err := NewEventTimes()
+	if err != nil {
+		return nil, err
+	}
+	return &DemoAggs{new(TextStats), times}, nil
 }
 
-// WORMStats demonstrates metrics collection on an event stream. The exported
-// fields can be used directly when aquired through a seeq.QuerySet.
-type WORMStats struct {
-	EventCount   int64 `json:event-count,string`    // number of entries
-	EventSizeSum int64 `json:event-size-sum,string` // payload byte count
+// TextStats demonstrates an in-memory aggregate.
+type TextStats struct {
+	MsgCount int64 `json:msg-count,string`
+	SizeSum  int64 `json:size-sum,string`
 }
 
-// EventSizeAvg demonstrates a simple query beyond the exported fields. Note how
-// no errors are rather common here.
-func (stats *WORMStats) EventSizeAvg() int64 {
-	if stats.EventCount == 0 {
+// SizeAvg demonstrates a simple query beyond exported fields.
+// Note the absense of errors.
+func (stats *TextStats) SizeAvg() int64 {
+	// No concurrency issues to worry about as query methods
+	// get invoked on read-only instances exclusively.
+	if stats.MsgCount == 0 {
 		return -1
 	}
-	return stats.EventSizeSum / stats.EventCount
+	return stats.SizeSum / stats.MsgCount
 }
 
 // AddNext implements the seeq.Aggregate interface.
-func (stats *WORMStats) AddNext(batch []stream.Entry) {
-	stats.EventCount += int64(len(batch))
+func (stats *TextStats) AddNext(batch []stream.Entry, offset uint64) error {
+	// no concurrency issues to worry about
 	for i := range batch {
-		stats.EventSizeSum += int64(len(batch[i].Payload))
+		parts := stream.CachedMediaType(batch[i].MediaType)
+		switch {
+		case parts.Type == "text" && parts.Subtype == "plain":
+			stats.MsgCount++
+			stats.SizeSum += int64(len(batch[i].Payload))
+		}
 	}
+	return nil
 }
 
 // DumpTo implements the seeq.Aggregate interface.
-func (stats *WORMStats) DumpTo(w io.Writer) error {
+func (stats *TextStats) DumpTo(w io.Writer) error {
 	return json.NewEncoder(w).Encode(stats)
 }
 
 // LoadFrom implements the seeq.Aggregate interface.
-func (stats *WORMStats) LoadFrom(r io.Reader) error {
-	*stats = WORMStats{} // reset
+func (stats *TextStats) LoadFrom(r io.Reader) error {
+	*stats = TextStats{} // reset
 	return json.NewDecoder(r).Decode(stats)
 }
 
-// WORMCheck demonstrates payload consumption. The exported field can be used
-// directly when aquired through a seeq.QuerySet.
-type WORMCheck struct {
-	Digest hash.Hash
+// EventTimes demonstrates a database aggregate.
+type EventTimes struct {
+	File *os.File
 }
 
-// NewSecureWORMCheck returns a new aggregate for stream-offset zero.
-func NewSecureWORMCheck(h crypto.Hash) *WORMCheck {
-	c := &WORMCheck{h.New()}
-	gob.Register(c.Digest)
-	return c
+// NewEventTimes returns a new aggregate for stream-offset zero.
+func NewEventTimes() (*EventTimes, error) {
+	f, err := os.CreateTemp("", "timestamps.")
+	if err != nil {
+		return nil, err
+	}
+	runtime.SetFinalizer(f, func(f *os.File) { f.Close() })
+
+	// file is fully gone once closed
+	err = os.Remove(f.Name())
+	if err != nil {
+		return nil, err
+	}
+
+	return &EventTimes{f}, nil
+}
+
+// ByIndex demonstates a query with block devices.
+func (times *EventTimes) ByIndex(i int64) (submitted, accepted time.Time, err error) {
+	var record [16]byte
+	_, err = times.File.ReadAt(record[:], i*int64(len(record)))
+	submitted = time.UnixMilli(int64(binary.BigEndian.Uint64(record[:8]))).UTC()
+	accepted = time.UnixMilli(int64(binary.BigEndian.Uint64(record[8:]))).UTC()
+	return
 }
 
 // AddNext implements the seeq.Aggregate interface.
-func (ck *WORMCheck) AddNext(batch []stream.Entry) {
+func (times *EventTimes) AddNext(batch []stream.Entry, offset uint64) error {
 	for i := range batch {
-		ck.Digest.Write(batch[i].Payload)
+		// filter "my-event" entries
+		parts := stream.CachedMediaType(batch[i].MediaType)
+		if parts.Subtype != "my-event" || parts.Suffix != "json" {
+			continue
+		}
+
+		// parse timestamps
+		var meta struct {
+			Submitted time.Time `json:"dc:dateSubmitted"`
+			Accepted  time.Time `json:"dc:dateAccepted"`
+		}
+		err := json.Unmarshal(batch[i].Payload, &meta)
+		if err != nil {
+			log.Printf("stream entry № %d corrupt: %s", offset+uint64(i)+1, err)
+			continue
+		}
+
+		// write timestamps
+		var record [16]byte
+		binary.BigEndian.PutUint64(record[:8], uint64(meta.Submitted.UnixMilli()))
+		binary.BigEndian.PutUint64(record[8:], uint64(meta.Accepted.UnixMilli()))
+		_, err = times.File.Write(record[:])
+		if err != nil {
+			return err // filesystem malfunction is fatal
+		}
 	}
+
+	return times.File.Sync()
 }
 
 // DumpTo implements the seeq.Aggregate interface.
-func (ck *WORMCheck) DumpTo(w io.Writer) error {
-	return gob.NewEncoder(w).Encode(ck)
+func (times *EventTimes) DumpTo(w io.Writer) error {
+	_, err := times.File.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(w, times.File)
+	return err
 }
 
 // LoadFrom implements the seeq.Aggregate interface.
-func (ck *WORMCheck) LoadFrom(r io.Reader) error {
-	*ck = WORMCheck{} // reset
-	return gob.NewDecoder(r).Decode(ck)
+func (times *EventTimes) LoadFrom(r io.Reader) error {
+	_, err := times.File.Seek(0, io.SeekStart)
+	if err != nil {
+		return err
+	}
+	n, err := io.Copy(times.File, r)
+	if err != nil {
+		return err
+	}
+	return times.File.Truncate(n)
 }
