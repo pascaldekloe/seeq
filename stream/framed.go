@@ -33,13 +33,16 @@ func (w bufWriter) Write(batch []Entry) error {
 	return w.w.Flush()
 }
 
-// NewFramedReader decodes output from a NewFramedWriter. The Reader must start
-// at the beginning of a frame. Offset counts the number of entries read before
-// the current Reader position.
+// NewFramedReader decodes output from a NewFramedWriter. The io.Reader must
+// start at the beginning of a frame. Offset is the number of entries passed
+// the very beginning of the stream.
 //
-// Partial entries at the end cause an io.EOF—not io.ErrUnexpectedEOF. Such
-// incomplete content will pass on to retries once the remaining data becomes
-// available again.
+// Partial frames at the end if input cause an io.EOF—not io.ErrUnexpectedEOF.
+// Any of such incomplete data will pass on to Read retries once the remaining
+// data becomes available again.
+//
+// The framed format is error free. Any Read error other than io.EOF comes
+// directly from the io.Reader.
 //
 // Each unique media-type value is kept in memory. Read does not allocate any
 // memory for entries with reoccurring media types, other than the (automatic)

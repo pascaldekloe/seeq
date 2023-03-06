@@ -41,15 +41,15 @@ func DeepCopy(entries ...Entry) []Entry {
 
 // Reader iterates over stream content in chronological order.
 type Reader interface {
-	// Read acquires the next in line and places them into basket in order
+	// Read acquires the next in line and places each into basket in order
 	// of appearance. The error is non-nil when read count n < len(basket).
-	// Live streams have a shifing EOF. Use short polling to follow.
+	// Live streams have a shifing io.EOF. Use short polling to follow.
 	//
 	// ⚠️ Clients may not retain Payload from basket[:n]. The bytes stop
 	// being valid at the next read due to possible buffer reuse.
 	Read(basket []Entry) (n int, err error)
 
-	// Offset returns the number of entries passed since the very begining
+	// Offset returns the number of entries passed since the very beginning
 	// of the stream.
 	Offset() uint64
 }
