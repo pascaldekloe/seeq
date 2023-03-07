@@ -19,7 +19,7 @@ func (rec *Recording) AddNext(batch []stream.Entry, offset uint64) error {
 	if offset != uint64(len(*rec)) {
 		return fmt.Errorf("recording aggregate got offset %d, want %d", offset, len(*rec))
 	}
-	*rec = append(*rec, stream.DeepCopy(batch...)...)
+	*rec = append(*rec, stream.CloneAll(batch...)...)
 	return nil
 }
 

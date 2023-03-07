@@ -7,7 +7,7 @@ import (
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-func TestDeepCopy(t *testing.T) {
+func TestCloneAll(t *testing.T) {
 	var tests = [][]stream.Entry{
 		{},
 		{{}},
@@ -15,7 +15,7 @@ func TestDeepCopy(t *testing.T) {
 	}
 
 	for _, entries := range tests {
-		clone := stream.DeepCopy(entries...)
+		clone := stream.CloneAll(entries...)
 		if len(clone) != len(entries) {
 			t.Errorf("got %d entries, want %d", len(clone), len(entries))
 			continue

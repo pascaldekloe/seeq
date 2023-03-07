@@ -18,25 +18,26 @@ type Entry struct {
 	Payload   []byte // content
 }
 
-// DeepCopy returns a full clone of each Entry.
-func DeepCopy(entries ...Entry) []Entry {
-	var l int
-	for i := range entries {
-		l += len(entries[i].Payload)
+// CloneAll returns a deep copy of source.
+func CloneAll(source ...Entry) []Entry {
+	var byteN int
+	for i := range source {
+		byteN += len(source[i].Payload)
 	}
-	payloads := make([]byte, l)
+	payloads := make([]byte, byteN)
 	var offset int
 
-	c := make([]Entry, len(entries))
-	for i := range entries {
-		c[i].MediaType = entries[i].MediaType
+	clone := make([]Entry, len(source))
+	for i := range source {
+		// read-only strings don't need copy
+		clone[i].MediaType = source[i].MediaType
 
-		end := offset + copy(payloads[offset:], entries[i].Payload)
-		c[i].Payload = payloads[offset:end:end]
+		end := offset + copy(payloads[offset:], source[i].Payload)
+		clone[i].Payload = payloads[offset:end:end]
 		offset = end
 	}
 
-	return c
+	return clone
 }
 
 // Reader iterates over stream content in chronological order.
