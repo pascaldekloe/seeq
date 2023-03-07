@@ -9,6 +9,7 @@ import (
 
 	"github.com/pascaldekloe/seeq"
 	"github.com/pascaldekloe/seeq/stream"
+	"github.com/pascaldekloe/seeq/stream/streamtest"
 )
 
 // Recording is seeq.Aggregate for testing.
@@ -167,5 +168,36 @@ func TestCopyError(t *testing.T) {
 		if err == nil || err.Error() != want {
 			t.Errorf("got error %q, want %q", err, want)
 		}
+	})
+}
+
+func TestSyncEach(t *testing.T) {
+	tests := [][]stream.Entry{
+		{},
+		{{MediaType: "text/plain", Payload: []byte("foo")}},
+		{{}, {MediaType: "text/void"}, {}},
+	}
+
+	run := func(buf []stream.Entry) {
+		for _, test := range tests {
+			r := streamtest.NewFixedReader(test...)
+			rec1 := make(Recording, 0)
+			rec2 := make(Recording, 0)
+			_, err := seeq.SyncEach(r, buf, &rec1, &rec2)
+			if err != nil {
+				t.Errorf("got error %q for: %+v", err, test)
+				continue
+			}
+
+			rec1.VerifyEqual(t, test...)
+			rec2.VerifyEqual(t, test...)
+		}
+	}
+
+	t.Run("Singles", func(t *testing.T) {
+		run(make([]stream.Entry, 1))
+	})
+	t.Run("Batch2", func(t *testing.T) {
+		run(make([]stream.Entry, 2))
 	})
 }
