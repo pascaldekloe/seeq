@@ -61,22 +61,21 @@ type Fix[Aggs any] struct {
 	LiveAt time.Time
 }
 
-// AggField is an Aggs struct field tagged as aggregate.
-type aggField struct {
-	index   int    // struct position
-	aggName string // user label
+// GroupConfig for Aggs has the configuration of each embedded Aggregate.
+type groupConfig[Aggs any] struct {
+	constructor     func() (*Aggs, error)
+	aggFieldIndices []int    // struct position
+	aggNames        []string // user label (from tag)
 }
 
-// AggsFields validates the configuration of Aggs and it returns each field
-// tagged as aggregate.
-func aggsFields[Aggs any]() ([]aggField, error) {
+func newGroupConfig[Aggs any](constructor func() (*Aggs, error)) (*groupConfig[Aggs], error) {
+	c := groupConfig[Aggs]{constructor: constructor}
+
 	aggsType := reflect.TypeOf((*Aggs)(nil)).Elem()
 	aggType := reflect.TypeOf((*Aggregate[stream.Entry])(nil)).Elem()
 	if k := aggsType.Kind(); k != reflect.Struct {
 		return nil, fmt.Errorf("%s is of kind %s, need %s", aggsType, k, reflect.Struct)
 	}
-
-	var found []aggField
 
 	fieldN := aggsType.NumField()
 	for i := 0; i < fieldN; i++ {
@@ -86,11 +85,13 @@ func aggsFields[Aggs any]() ([]aggField, error) {
 		if !ok {
 			continue // not tagged as aggregate
 		}
+		c.aggFieldIndices = append(c.aggFieldIndices, i)
 
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" {
 			name = aggsType.String() + "." + field.Name
 		}
+		c.aggNames = append(c.aggNames, name)
 
 		if !field.IsExported() {
 			return nil, fmt.Errorf("%s field %s is not exported [title-case]", aggsType, field.Name)
@@ -98,34 +99,49 @@ func aggsFields[Aggs any]() ([]aggField, error) {
 		if !field.Type.Implements(aggType) {
 			return nil, fmt.Errorf("%s field %s type %s does not implement %s", aggsType, field.Name, field.Type, aggType)
 		}
-
-		found = append(found, aggField{i, name})
 	}
 
-	if len(found) == 0 {
+	if len(c.aggNames) == 0 {
 		return nil, fmt.Errorf("%s has no aggregate tags", aggsType)
 	}
 
 	// duplicate name check
 	indexPerName := make(map[string]int)
-	for _, f := range found {
-		previous, ok := indexPerName[f.aggName]
+	for i, name := range c.aggNames {
+		previous, ok := indexPerName[name]
 		if ok {
 			return nil, fmt.Errorf("%s has both field %s and field %s named as aggregate %q",
-				aggsType, aggsType.Field(previous).Name, aggsType.Field(f.index).Name, f.aggName)
+				aggsType,
+				aggsType.Field(c.aggFieldIndices[previous]).Name,
+				aggsType.Field(c.aggFieldIndices[i]).Name,
+				name)
 		}
-		indexPerName[f.aggName] = f.index
+		indexPerName[name] = i
 	}
 
-	return found, nil
+	return &c, nil
+}
+
+func (c *groupConfig[Aggs]) newGroup() (*Aggs, []Aggregate[stream.Entry], error) {
+	a, err := c.constructor()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	aggs := make([]Aggregate[stream.Entry], len(c.aggFieldIndices))
+	v := reflect.ValueOf(a).Elem()
+	for i := range aggs {
+		aggs[i] = v.Field(c.aggFieldIndices[i]).Interface().(Aggregate[stream.Entry])
+	}
+
+	return a, aggs, nil
 }
 
 // Group manages a set of aggregates together as a group. Aggs must be a struct
 // with one or more of its fields tagged as `aggregate:"some_name"`. Any of such
 // fields must implement the Aggregate[stream.Entry] interface.
 type Group[Aggs any] struct {
-	constructor func() (*Aggs, error)
-	aggsFields  []aggField
+	groupConfig[Aggs]
 
 	// latest singleton, or nil initially
 	live chan *Fix[Aggs]
@@ -142,14 +158,13 @@ type Group[Aggs any] struct {
 // must match stream offset zero.
 func NewGroup[Aggs any](constructor func() (*Aggs, error)) (*Group[Aggs], error) {
 	// read & validate configuration
-	fields, err := aggsFields[Aggs]()
+	c, err := newGroupConfig(constructor)
 	if err != nil {
 		return nil, err
 	}
 
 	g := Group[Aggs]{
-		constructor: constructor,
-		aggsFields:  fields,
+		groupConfig: *c,
 		live:        make(chan *Fix[Aggs], 1),
 		release:     make(chan Fix[Aggs]),
 		interrupt:   make(chan struct{}, 1),
@@ -180,8 +195,7 @@ func (g *Group[Aggs]) SyncFrom(r stream.Reader) error {
 	default:
 	}
 
-	// instantiate working copy
-	instance, aggs, err := g.fork(0, nil)
+	instance, aggs, err := g.newGroup()
 	if err != nil {
 		return err
 	}
@@ -191,27 +205,22 @@ func (g *Group[Aggs]) SyncFrom(r stream.Reader) error {
 
 // SyncFromRepo until failure or Interrupt.
 func (g *Group[Aggs]) SyncFromRepo(streams stream.Repo, streamName string) error {
+	if g.Snapshots == nil {
+		return g.SyncFrom(streams.ReadAt(streamName, 0))
+	}
+
 	// clear any pending interrupt request
 	select {
 	case <-g.interrupt:
 	default:
 	}
 
-	if g.Snapshots == nil {
-		return g.SyncFrom(streams.ReadAt(streamName, 0))
-	}
-
-	// instantiate working copy
-	instance, aggs, err := g.fork(0, nil)
+	instance, aggs, err := g.newGroup()
 	if err != nil {
 		return err
 	}
 
-	aggNames := make([]string, 0, len(g.aggsFields))
-	for _, f := range g.aggsFields {
-		aggNames = append(aggNames, f.aggName)
-	}
-	offset, err := snapshot.LastCommon(g.Snapshots, aggNames...)
+	offset, err := snapshot.LastCommon(g.Snapshots, g.aggNames...)
 	if err != nil {
 		return err
 	}
@@ -222,7 +231,7 @@ func (g *Group[Aggs]) SyncFromRepo(streams stream.Repo, streamName string) error
 	errs := make(chan error, len(aggs))
 	for i := range aggs {
 		go func(i int) {
-			r, err := g.Snapshots.Open(aggNames[i], offset)
+			r, err := g.Snapshots.Open(g.aggNames[i], offset)
 			if err != nil {
 				errs <- err
 				return
@@ -285,19 +294,9 @@ func (g *Group[Aggs]) syncFrom(r stream.Reader, workingCopy *Aggs, aggs []Aggreg
 }
 
 func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs, []Aggregate[stream.Entry], error) {
-	instance, err := g.constructor()
+	instance, aggs, err := g.newGroup()
 	if err != nil {
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
-	}
-
-	aggs := make([]Aggregate[stream.Entry], len(g.aggsFields))
-	v := reflect.ValueOf(instance).Elem()
-	for i := range aggs {
-		aggs[i] = v.Field(g.aggsFields[i].index).Interface().(Aggregate[stream.Entry])
-	}
-
-	if len(old) != len(aggs) {
-		return instance, aggs, nil
 	}
 
 	// parallel Copy each aggregate
@@ -307,7 +306,7 @@ func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs,
 			var prod snapshot.Production
 			if g.Snapshots != nil {
 				var err error
-				prod, err = g.Snapshots.Make(g.aggsFields[i].aggName, offset)
+				prod, err = g.Snapshots.Make(g.aggNames[i], offset)
 				if err != nil {
 					log.Print("snapshot omitted: ", err)
 				}
