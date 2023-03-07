@@ -48,38 +48,37 @@ func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entr
 	}
 }
 
-// Fix contains aggregates which are ready to serve queries. No more stream
-// content shall be applied.
-type Fix[Aggs any] struct {
-	Aggs *Aggs // read-only
+// Fix has a live T frozen to serve queries.
+type Fix[T any] struct {
+	Q *T // read-only
 
-	// Offset is stream position. The value matches the number of stream
-	// entries applied to each aggregate in Aggs.
+	// Offset is input stream position. The value matches the number of
+	// stream entries applied to Q
 	Offset uint64
 
-	// Live is when the input stream was consumed in full.
+	// Live is when the input stream had no more than Offset available.
 	LiveAt time.Time
 }
 
-// GroupConfig for Aggs has the configuration of each embedded Aggregate.
-type groupConfig[Aggs any] struct {
-	constructor     func() (*Aggs, error)
+// groupConfig has the configuration of each embedded Aggregate.
+type groupConfig[Group any] struct {
+	constructor     func() (*Group, error)
 	aggFieldIndices []int    // struct position
 	aggNames        []string // user label (from tag)
 }
 
-func newGroupConfig[Aggs any](constructor func() (*Aggs, error)) (*groupConfig[Aggs], error) {
-	c := groupConfig[Aggs]{constructor: constructor}
+func newGroupConfig[Group any](constructor func() (*Group, error)) (*groupConfig[Group], error) {
+	c := groupConfig[Group]{constructor: constructor}
 
-	aggsType := reflect.TypeOf((*Aggs)(nil)).Elem()
+	groupType := reflect.TypeOf((*Group)(nil)).Elem()
 	aggType := reflect.TypeOf((*Aggregate[stream.Entry])(nil)).Elem()
-	if k := aggsType.Kind(); k != reflect.Struct {
-		return nil, fmt.Errorf("%s is of kind %s, need %s", aggsType, k, reflect.Struct)
+	if k := groupType.Kind(); k != reflect.Struct {
+		return nil, fmt.Errorf("aggregate group %s is of kind %s—not %s", groupType, k, reflect.Struct)
 	}
 
-	fieldN := aggsType.NumField()
+	fieldN := groupType.NumField()
 	for i := 0; i < fieldN; i++ {
-		field := aggsType.Field(i)
+		field := groupType.Field(i)
 
 		tag, ok := field.Tag.Lookup("aggregate")
 		if !ok {
@@ -89,20 +88,20 @@ func newGroupConfig[Aggs any](constructor func() (*Aggs, error)) (*groupConfig[A
 
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" {
-			name = aggsType.String() + "." + field.Name
+			name = groupType.String() + "." + field.Name
 		}
 		c.aggNames = append(c.aggNames, name)
 
 		if !field.IsExported() {
-			return nil, fmt.Errorf("%s field %s is not exported [title-case]", aggsType, field.Name)
+			return nil, fmt.Errorf("aggregate group %s, field %s is not exported; first letter must upper-case", groupType, field.Name)
 		}
 		if !field.Type.Implements(aggType) {
-			return nil, fmt.Errorf("%s field %s type %s does not implement %s", aggsType, field.Name, field.Type, aggType)
+			return nil, fmt.Errorf("aggregate group %s, field %s, type %s does not implement %s", groupType, field.Name, field.Type, aggType)
 		}
 	}
 
 	if len(c.aggNames) == 0 {
-		return nil, fmt.Errorf("%s has no aggregate tags", aggsType)
+		return nil, fmt.Errorf("aggregate group %s has no aggregate tags", groupType)
 	}
 
 	// duplicate name check
@@ -110,10 +109,10 @@ func newGroupConfig[Aggs any](constructor func() (*Aggs, error)) (*groupConfig[A
 	for i, name := range c.aggNames {
 		previous, ok := indexPerName[name]
 		if ok {
-			return nil, fmt.Errorf("%s has both field %s and field %s named as aggregate %q",
-				aggsType,
-				aggsType.Field(c.aggFieldIndices[previous]).Name,
-				aggsType.Field(c.aggFieldIndices[i]).Name,
+			return nil, fmt.Errorf("aggregate group %s has both field %s and field %s tagged as %q",
+				groupType,
+				groupType.Field(c.aggFieldIndices[previous]).Name,
+				groupType.Field(c.aggFieldIndices[i]).Name,
 				name)
 		}
 		indexPerName[name] = i
@@ -122,65 +121,99 @@ func newGroupConfig[Aggs any](constructor func() (*Aggs, error)) (*groupConfig[A
 	return &c, nil
 }
 
-func (c *groupConfig[Aggs]) newGroup() (*Aggs, []Aggregate[stream.Entry], error) {
-	a, err := c.constructor()
+func (c *groupConfig[Group]) newGroup() (*Group, []Aggregate[stream.Entry], error) {
+	group, err := c.constructor()
 	if err != nil {
 		return nil, nil, err
 	}
 
 	aggs := make([]Aggregate[stream.Entry], len(c.aggFieldIndices))
-	v := reflect.ValueOf(a).Elem()
+	v := reflect.ValueOf(group).Elem()
 	for i := range aggs {
 		aggs[i] = v.Field(c.aggFieldIndices[i]).Interface().(Aggregate[stream.Entry])
 	}
 
-	return a, aggs, nil
+	return group, aggs, nil
 }
 
-// Group manages a set of aggregates together as a group. Aggs must be a struct
-// with one or more of its fields tagged as `aggregate:"some_name"`. Any of such
-// fields must implement the Aggregate[stream.Entry] interface.
-type Group[Aggs any] struct {
-	groupConfig[Aggs]
+// ReleaseSync updates a T sequentially. Once a T is live, the instance may be
+// taken offline for queries. Synchonisation will continue with a new copy until
+// the previous expires (with notBefore from LiveSince).
+//
+//	     (start)
+//	        │
+//	[ new aggregate ]<────────────────┐
+//	        │                         │
+//	¿ have snapshot ? ─── no ──┐      │
+//	        │                  │      │
+//	       yes                 │      │
+//	        │                  │      │
+//	[ load snapshot ]          │      │
+//	        │                  │      │
+//	        ├<─────────────────┘      │
+//	        │                         │
+//	[  read record  ] <────────┐      │
+//	        │                  │      │
+//	¿ end of stream ? ─── no ──┤      │
+//	        │                  │      │
+//	       yes                 │      │
+//	        │                  │      │
+//	¿ query request ? ─── no ──┘      │
+//	        │                         │
+//	       yes ── [ make snapshot ] ──┘
+//	        │
+//	[ serve queries ] <────────┐
+//	        │                  │
+//	¿  still recent ? ── yes ──┘
+//	        │
+//	        no
+//	        │
+//	      (stop)
+//
+// T must be a struct with one or more of its fields tagged as
+// `aggregate:"some_name"`. Each of such fields must implement
+// Aggregate[stream.Entry].
+type ReleaseSync[T any] struct {
+	groupConfig[T]
 
 	// latest singleton, or nil initially
-	live chan *Fix[Aggs]
+	live chan *Fix[T]
 	// working copy handover
-	release chan Fix[Aggs]
+	release chan Fix[T]
 	// halts synchronisation
 	interrupt chan struct{}
 
 	Snapshots snapshot.Archive // optional
 }
 
-// NewGroup validates the Aggs configuration before returning a new setup.
-// Constructor must return each aggregate in its initial state, i.e., the Aggs
+// NewReleaseSync validates the configuration of T before returning a new setup.
+// Constructor must return a new instance in its initial state, i.e., the return
 // must match stream offset zero.
-func NewGroup[Aggs any](constructor func() (*Aggs, error)) (*Group[Aggs], error) {
+func NewReleaseSync[T any](constructor func() (*T, error)) (*ReleaseSync[T], error) {
 	// read & validate configuration
 	c, err := newGroupConfig(constructor)
 	if err != nil {
 		return nil, err
 	}
 
-	g := Group[Aggs]{
+	sync := ReleaseSync[T]{
 		groupConfig: *c,
-		live:        make(chan *Fix[Aggs], 1),
-		release:     make(chan Fix[Aggs]),
+		live:        make(chan *Fix[T], 1),
+		release:     make(chan Fix[T]),
 		interrupt:   make(chan struct{}, 1),
 	}
-	g.live <- nil // initial placeholder
+	sync.live <- nil // initial placeholder
 
-	return &g, nil
+	return &sync, nil
 }
 
 // ErrInterrupt is the result of an Interrupt request.
 var ErrInterrupt = errors.New("aggregate synchronisation received an interrupt")
 
 // Interrupt halts any ongoing synchronisation with ErrInterrupt.
-func (g *Group[Aggs]) Interrupt() {
+func (sync *ReleaseSync[T]) Interrupt() {
 	select {
-	case g.interrupt <- struct{}{}:
+	case sync.interrupt <- struct{}{}:
 		break // signal installed
 	default:
 		break // signal already pending
@@ -188,50 +221,50 @@ func (g *Group[Aggs]) Interrupt() {
 }
 
 // SyncFrom a stream until failure or Interrupt.
-func (g *Group[Aggs]) SyncFrom(r stream.Reader) error {
+func (sync *ReleaseSync[T]) SyncFrom(r stream.Reader) error {
 	// clear any pending interrupt request
 	select {
-	case <-g.interrupt:
+	case <-sync.interrupt:
 	default:
 	}
 
-	instance, aggs, err := g.newGroup()
+	group, aggs, err := sync.newGroup()
 	if err != nil {
 		return err
 	}
 
-	return g.syncFrom(r, instance, aggs)
+	return sync.syncGroupFrom(r, group, aggs)
 }
 
 // SyncFromRepo until failure or Interrupt.
-func (g *Group[Aggs]) SyncFromRepo(streams stream.Repo, streamName string) error {
-	if g.Snapshots == nil {
-		return g.SyncFrom(streams.ReadAt(streamName, 0))
+func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string) error {
+	if sync.Snapshots == nil {
+		return sync.SyncFrom(streams.ReadAt(streamName, 0))
 	}
 
 	// clear any pending interrupt request
 	select {
-	case <-g.interrupt:
+	case <-sync.interrupt:
 	default:
 	}
 
-	instance, aggs, err := g.newGroup()
+	group, aggs, err := sync.newGroup()
 	if err != nil {
 		return err
 	}
 
-	offset, err := snapshot.LastCommon(g.Snapshots, g.aggNames...)
+	offset, err := snapshot.LastCommon(sync.Snapshots, sync.aggNames...)
 	if err != nil {
 		return err
 	}
 	if offset == 0 {
-		return g.SyncFrom(streams.ReadAt(streamName, 0))
+		return sync.SyncFrom(streams.ReadAt(streamName, 0))
 	}
 
 	errs := make(chan error, len(aggs))
 	for i := range aggs {
 		go func(i int) {
-			r, err := g.Snapshots.Open(g.aggNames[i], offset)
+			r, err := sync.Snapshots.Open(sync.aggNames[i], offset)
 			if err != nil {
 				errs <- err
 				return
@@ -251,13 +284,13 @@ func (g *Group[Aggs]) SyncFromRepo(streams stream.Repo, streamName string) error
 		}
 	}
 	if errN != 0 {
-		return fmt.Errorf("aggregate group synchronisation halt on %d snapshot recovery error(s)", errN)
+		return fmt.Errorf("synchronisation halt on %d snapshot recovery error(s)", errN)
 	}
 
-	return g.syncFrom(streams.ReadAt(streamName, offset), instance, aggs)
+	return sync.syncGroupFrom(streams.ReadAt(streamName, offset), group, aggs)
 }
 
-func (g *Group[Aggs]) syncFrom(r stream.Reader, workingCopy *Aggs, aggs []Aggregate[stream.Entry]) error {
+func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []Aggregate[stream.Entry]) error {
 	// once live the Fix is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
@@ -277,24 +310,24 @@ func (g *Group[Aggs]) syncFrom(r stream.Reader, workingCopy *Aggs, aggs []Aggreg
 		select {
 		case <-offerTimer.C:
 			break // no demand
-		case g.release <- Fix[Aggs]{Aggs: workingCopy, Offset: r.Offset(), LiveAt: lastReadTime}:
+		case sync.release <- Fix[T]{Q: group, Offset: r.Offset(), LiveAt: lastReadTime}:
 			if !offerTimer.Stop() {
 				<-offerTimer.C
 			}
 
 			// swap working copy
-			workingCopy, aggs, err = g.fork(r.Offset(), aggs)
+			group, aggs, err = sync.forkGroup(r.Offset(), aggs)
 			if err != nil {
 				return err
 			}
-		case <-g.interrupt:
+		case <-sync.interrupt:
 			return ErrInterrupt
 		}
 	}
 }
 
-func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs, []Aggregate[stream.Entry], error) {
-	instance, aggs, err := g.newGroup()
+func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []Aggregate[stream.Entry]) (*T, []Aggregate[stream.Entry], error) {
+	group, aggs, err := sync.newGroup()
 	if err != nil {
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
 	}
@@ -304,9 +337,9 @@ func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs,
 	for i := range aggs {
 		go func(i int) {
 			var prod snapshot.Production
-			if g.Snapshots != nil {
+			if sync.Snapshots != nil {
 				var err error
-				prod, err = g.Snapshots.Make(g.aggNames[i], offset)
+				prod, err = sync.Snapshots.Make(sync.aggNames[i], offset)
 				if err != nil {
 					log.Print("snapshot omitted: ", err)
 				}
@@ -343,49 +376,49 @@ func (g *Group[Aggs]) fork(offset uint64, old []Aggregate[stream.Entry]) (*Aggs,
 	if err != nil {
 		return nil, nil, err
 	}
-	return instance, aggs, nil
+	return group, aggs, nil
 }
 
 // ErrLiveFuture denies freshness.
 var ErrLiveFuture = errors.New("aggregate from future not available")
 
-// LiveSince returns aggregates no older than notBefore. The notBefore range is
+// LiveSince returns a T live no older than notBefore. The notBefore range is
 // protected with ErrLiveFuture.
-func (g *Group[Aggs]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[Aggs], error) {
+func (sync *ReleaseSync[T]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[T], error) {
 	tolerance := time.Since(notBefore)
 	if tolerance < 0 {
-		return Fix[Aggs]{}, ErrLiveFuture
+		return Fix[T]{}, ErrLiveFuture
 	}
 
 	ctxDone := ctx.Done()
 	select {
-	case fix := <-g.live:
+	case fix := <-sync.live:
 		switch {
 		case fix == nil:
 			break // discard placeholder
 		case fix.LiveAt.Before(notBefore):
 			break // discard expired
 		default:
-			g.live <- fix // unlock singleton
+			sync.live <- fix // unlock singleton
 			return *fix, nil
 		}
 	case <-ctxDone:
-		return Fix[Aggs]{}, ctx.Err()
+		return Fix[T]{}, ctx.Err()
 	}
 
 	for {
 		select {
-		case fix := <-g.release:
+		case fix := <-sync.release:
 			if fix.LiveAt.Before(notBefore) {
 				continue // discard again
 				// Such unfortunate waste could be
 				// avoided with a feedback channel.
 			}
-			g.live <- &fix // unlock
+			sync.live <- &fix // unlock
 			return fix, nil
 		case <-ctxDone:
-			g.live <- nil // unlock [waste for nothing]
-			return Fix[Aggs]{}, ctx.Err()
+			sync.live <- nil // unlock [waste for nothing]
+			return Fix[T]{}, ctx.Err()
 		}
 	}
 }

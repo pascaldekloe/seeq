@@ -22,8 +22,7 @@ func Example() {
 		return
 	}
 
-	const streamName = "demo-stream"
-	w := repo.AppendTo(streamName)
+	w := repo.AppendTo("demo-stream")
 	defer w.Close()
 	err := w.Write([]stream.Entry{
 		{"text/plain;v=1.0;rel=token", []byte("Hello,")},
@@ -39,28 +38,28 @@ func Example() {
 		return
 	}
 
-	group, err := seeq.NewGroup(NewDemoAggs)
+	sync, err := seeq.NewReleaseSync(NewDemoAggs)
 	if err != nil {
-		fmt.Println("illegal setup:", err)
+		fmt.Println("broken setup:", err)
 		return
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		fmt.Println(group.SyncFromRepo(repo, "demo-stream"))
+		fmt.Println(sync.SyncFromRepo(repo, "demo-stream"))
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	q, err := group.LiveSince(ctx, time.Now().Add(-100*time.Millisecond))
+	fix, err := sync.LiveSince(ctx, time.Now().Add(-100*time.Millisecond))
 	if err != nil {
 		fmt.Println("aggregate lookup expired:", err)
 		return
 	}
 
-	fmt.Printf("• stream offset: %d\n", q.Offset)
-	fmt.Printf("• average text size: %d bytes\n", q.Aggs.TextStats.SizeAvg())
-	submitted, accepted, err := q.Aggs.EventTimes.ByIndex(0)
+	fmt.Printf("• stream offset: %d\n", fix.Offset)
+	fmt.Printf("• average text size: %d bytes\n", fix.Q.TextStats.SizeAvg())
+	submitted, accepted, err := fix.Q.EventTimes.ByIndex(0)
 	if err != nil {
 		fmt.Println(err)
 	} else {
@@ -68,7 +67,7 @@ func Example() {
 		fmt.Printf("• event № 1 accepted: %s\n", accepted)
 	}
 
-	group.Interrupt()
+	sync.Interrupt()
 	<-done
 	// Output:
 	// • stream offset: 3
