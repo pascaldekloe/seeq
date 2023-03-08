@@ -34,6 +34,31 @@ func TestCloneAll(t *testing.T) {
 	}
 }
 
+func TestCloneAllAlloc(t *testing.T) {
+	e1 := stream.Entry{"text", []byte("one")}
+	e2 := stream.Entry{"text", []byte("two")}
+	e3 := stream.Entry{"text", []byte("three")}
+	e4 := stream.Entry{"text", []byte("four")}
+	t.Run("Variadic", func(t *testing.T) {
+		avg := testing.AllocsPerRun(1, func() {
+			stream.CloneAll(e1, e2, e3, e4)
+		})
+		if avg != 2 {
+			t.Errorf("got %f allocations on average, want 2", avg)
+		}
+	})
+
+	es := []stream.Entry{e1, e2, e3, e4}
+	t.Run("Slice", func(t *testing.T) {
+		avg := testing.AllocsPerRun(1, func() {
+			stream.CloneAll(es...)
+		})
+		if avg != 2 {
+			t.Errorf("got %f allocations on average, want 2", avg)
+		}
+	})
+}
+
 func ExampleMediaType() {
 	// parse rich MIME
 	const sample = `application/hal+json;profile="https://example.com/v1"`
