@@ -56,6 +56,9 @@ type Reader interface {
 }
 
 // Writer appends stream content.
+//
+// Only a single goroutine may invoke Write. Wrap a Writer with a NewFunnel for
+// use from multiple goroutines.
 type Writer interface {
 	// Write adds batch to the stream in ascending order. Errors other than
 	// ErrSizeMax are fatal to a Writer.
@@ -72,6 +75,78 @@ type ReadCloser interface {
 type WriteCloser interface {
 	Writer
 	io.Closer
+}
+
+// NewFunnel returns a new Writer proxy which can be used by multiple goroutines
+// simultaneously. The funnel may concatenate multiple Writes [batches] into one
+// Write operation towards out. Funnel Write gets io.ErrClosedPipe after Close.
+func NewFunnel(out Writer) WriteCloser {
+	f := funnel{
+		out: out,
+		que: make(chan []Entry),
+		err: make(chan error),
+
+		closed: make(chan struct{}),
+	}
+
+	go f.drain()
+
+	return &f
+}
+
+type funnel struct {
+	out Writer       // destination
+	que chan []Entry // batch handover
+	err chan error   // write response
+
+	closed    chan struct{} // close signal
+	closeOnce sync.Once
+}
+
+func (f *funnel) drain() {
+	for {
+		var batch []Entry
+		select {
+		case <-f.closed:
+			return
+		case batch = <-f.que:
+			break
+		}
+
+		batchN := 1
+		for ; ; batchN++ {
+			select {
+			case more := <-f.que:
+				batch = append(batch, more...)
+				continue
+
+			default:
+				break
+			}
+			break
+		}
+
+		err := f.out.Write(batch)
+		for i := 0; i < batchN; i++ {
+			f.err <- err
+		}
+	}
+}
+
+// Write implements the Writer interface.
+func (f *funnel) Write(batch []Entry) error {
+	select {
+	case f.que <- batch:
+		return <-f.err
+	case <-f.closed:
+		return io.ErrClosedPipe
+	}
+}
+
+// Close implements the io.Closer interface.
+func (f *funnel) Close() error {
+	f.closeOnce.Do(func() { close(f.closed) })
+	return nil
 }
 
 // MediaType is the decomposition a MIME definition.
