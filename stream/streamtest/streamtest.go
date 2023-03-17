@@ -56,6 +56,33 @@ func VerifyContent(t *testing.T, r stream.Reader, entries ...stream.Entry) (ok b
 	return ok
 }
 
+// NewChannelWriter returns a writer which sends to a channel.
+func NewChannelWriter() (stream.Writer, <-chan stream.Entry) {
+	c := make(chan stream.Entry)
+	return &channelWriter{out: c}, c
+}
+
+type channelWriter struct {
+	out chan<- stream.Entry
+
+	// concurrency detection
+	goroutineID atomic.Pointer[string]
+}
+
+// Write implements the stream.Writer interface.
+func (w *channelWriter) Write(batch []stream.Entry) error {
+	goroutineID := string(bytes.Fields(debug.Stack())[1])
+	previous := w.goroutineID.Swap(&goroutineID)
+	if previous != nil && *previous != goroutineID {
+		return errors.New("test stream write from multiple goroutines")
+	}
+
+	for i := range batch {
+		w.out <- batch[i]
+	}
+	return nil
+}
+
 // NewChannelReader returns a reader which serves from channel input.
 func NewChannelReader(bufN int) (stream.Reader, chan<- stream.Entry) {
 	c := make(chan stream.Entry, bufN)
