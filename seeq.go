@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pascaldekloe/seeq/snapshot"
 	"github.com/pascaldekloe/seeq/stream"
 )
 
@@ -18,20 +17,18 @@ import (
 // methods. The specifics are beyond the scope of this interface.
 //
 // Both LoadFrom and AddNext shall execute in isolation. DumpTo is considdered
-// to be a read-only operation. Therefore, DumpTo can be invoked simultaneously
-// (from multiple goroutines) with any query methods.
+// to be a read-only operation. Therefore, DumpTo may be invoked simultaneously
+// with query methods.
 type Aggregate[T any] interface {
-	// AddNext consumes a stream in chronological order. Malformed content
-	// should be reported only. The stream must continue at all times. Any
-	// error return is fatal to the Aggregate.
-	//
-	// Offset counts the number of entries passed before batch, since the
-	// very beginning of the stream.
+	// AddNext consumes a stream in chronological order. Offset counts the
+	// number of entries passed before batch.
+	// Malformed content should be reported only. The stream must continue
+	// at all times. Any error return is fatal to the Aggregate.
 	AddNext(batch []T, offset uint64) error
 
 	// DumpTo produces a snapshot/serial/backup of the Aggregate's state.
 	// When the implementation makes use of third-party storage such as a
-	// database, then the snapshot should include the stored content too.
+	// database, then the snapshot should include the stored content.
 	DumpTo(io.Writer) error
 
 	// LoadFrom resets the Aggregate state to a snapshot from DumpTo.
@@ -39,9 +36,8 @@ type Aggregate[T any] interface {
 	LoadFrom(io.Reader) error
 }
 
-// Copy the state from src into dst. Snapshot Production may be nil. Copy does
-// not Commit nor Abort the Production.
-func Copy[T any](dst, src Aggregate[T], p snapshot.Production) error {
+// Copy the state from src into dst. Snapshot may be omitted with nil.
+func Copy[T any](dst, src Aggregate[T], snapshot io.Writer) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -55,10 +51,10 @@ func Copy[T any](dst, src Aggregate[T], p snapshot.Production) error {
 	}()
 
 	var r io.Reader
-	if p == nil {
+	if snapshot == nil {
 		r = pr
 	} else {
-		r = io.TeeReader(pr, p)
+		r = io.TeeReader(pr, snapshot)
 	}
 
 	// load receives errors from src and w through the pipe
