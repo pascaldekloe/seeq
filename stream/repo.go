@@ -5,14 +5,21 @@ import "errors"
 // ErrFuture denies an offset beyond the current.
 var ErrFuture = errors.New("stream offset not reached yet")
 
+// ReaderAt provides access to a named stream-collection.
+//
+// Multiple goroutines may invoke methods on a ReaderAt simultaneously.
+type ReaderAt interface {
+	// ReadAt opens a stream by name and it skips the offset amount of
+	// entries before the first Read.
+	ReadAt(name string, offset uint64) ReadCloser
+}
+
 // Repo is a named stream-collection. A stream can have only one Writer. Any
 // amount of Readers are permitted.
 //
 // Multiple goroutines may invoke methods on a Repo simultaneously.
 type Repo interface {
-	// ReadAt opens a stream by name and it skips the offset amount of
-	// entries before the first Read.
-	ReadAt(name string, offset uint64) ReadCloser
+	ReaderAt
 
 	// AppendTo opens a stream by name. A fail-safe will deny multiple
 	// Writers to append to the same stream.
