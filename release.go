@@ -47,7 +47,7 @@ import (
 //
 // T must be a struct with one or more of its fields tagged as
 // `aggregate:"some_name"`. Each of such fields must implement
-// Aggregate[stream.Entry].
+// SnapshotAggregate[stream.Entry].
 type ReleaseSync[T any] struct {
 	groupConfig[T]
 
@@ -165,7 +165,7 @@ func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string)
 	return sync.syncGroupFrom(streams.ReadAt(streamName, offset), group, aggs)
 }
 
-func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []Aggregate[stream.Entry]) error {
+func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []SnapshotAggregate[stream.Entry]) error {
 	// once live the Fix is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
@@ -201,7 +201,7 @@ func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []Aggr
 	}
 }
 
-func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []Aggregate[stream.Entry]) (*T, []Aggregate[stream.Entry], error) {
+func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []SnapshotAggregate[stream.Entry]) (*T, []SnapshotAggregate[stream.Entry], error) {
 	group, aggs, err := sync.newGroup()
 	if err != nil {
 		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)

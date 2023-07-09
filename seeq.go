@@ -12,19 +12,23 @@ import (
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// An Aggregate consumes a stream of T—typically stream.Entry—for one or more
-// specific queries. Such queries may be served with exported fields and/or
-// methods. The specifics are beyond the scope of this interface.
-//
-// Both LoadFrom and AddNext shall execute in isolation. DumpTo is considdered
-// to be a read-only operation. Therefore, DumpTo may be invoked simultaneously
-// with query methods.
+// An Aggregate consumes a stream of T—typically stream.Entry—in order to serve
+// specific queries. Interpretations may use any combination of fields and/or
+// methods to do so. AddNext must execute sequentially, in isolation, and before
+// any of such queries.
 type Aggregate[T any] interface {
 	// AddNext consumes a stream in chronological order. Offset counts the
-	// number of entries passed before batch.
-	// Malformed content should be reported only. The stream must continue
-	// at all times. Any error return is fatal to the Aggregate.
+	// number of entries before the first batch element. Malformed content
+	// should be reported only. The stream must continue at all times. An
+	// error return is fatal to the Aggregate.
 	AddNext(batch []T, offset uint64) error
+}
+
+// A SnapshotAggregate can persist and recover its state in full. Both LoadFrom
+// and AddNext shall execute in isolation. DumpTo is considdered as a read-only
+// operation, and may therefore be invoked simultaneously with query methods.
+type SnapshotAggregate[T any] interface {
+	Aggregate[T]
 
 	// DumpTo produces a snapshot/serial/backup of the Aggregate's state.
 	// When the implementation makes use of third-party storage such as a
@@ -37,7 +41,7 @@ type Aggregate[T any] interface {
 }
 
 // Copy the state from src into dst. Snapshot may be omitted with nil.
-func Copy[T any](dst, src Aggregate[T], snapshot io.Writer) error {
+func Copy[T any](dst, src SnapshotAggregate[T], snapshot io.Writer) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -77,7 +81,7 @@ func Copy[T any](dst, src Aggregate[T], snapshot io.Writer) error {
 // Sync applies all entries from r to each Aggregate in argument order. The
 // length of buf defines the batch size for Read and AddNext. Error is nil on
 // success-not EOF.
-func Sync(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+func Sync[T Aggregate[stream.Entry]](r stream.Reader, buf []stream.Entry, aggs ...T) (lastRead time.Time, err error) {
 	if len(buf) == 0 {
 		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
 	}
@@ -182,16 +186,16 @@ func newGroupConfig[Group any](constructor func() (*Group, error)) (*groupConfig
 	return &c, nil
 }
 
-func (c *groupConfig[Group]) newGroup() (*Group, []Aggregate[stream.Entry], error) {
+func (c *groupConfig[Group]) newGroup() (*Group, []SnapshotAggregate[stream.Entry], error) {
 	group, err := c.constructor()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	aggs := make([]Aggregate[stream.Entry], len(c.aggFieldIndices))
+	aggs := make([]SnapshotAggregate[stream.Entry], len(c.aggFieldIndices))
 	v := reflect.ValueOf(group).Elem()
 	for i := range aggs {
-		aggs[i] = v.Field(c.aggFieldIndices[i]).Interface().(Aggregate[stream.Entry])
+		aggs[i] = v.Field(c.aggFieldIndices[i]).Interface().(SnapshotAggregate[stream.Entry])
 	}
 
 	return group, aggs, nil
