@@ -29,8 +29,8 @@ func NewDemoAggs() (*DemoAggs, error) {
 
 // TextStats demonstrates an in-memory aggregate.
 type TextStats struct {
-	MsgCount int64 `json:msg-count,string`
-	SizeSum  int64 `json:size-sum,string`
+	MsgCount int64 `json:"msg-count,string"`
+	SizeSum  int64 `json:"size-sum,string"`
 }
 
 // SizeAvg demonstrates a simple query beyond exported fields.
