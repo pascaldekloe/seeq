@@ -74,9 +74,10 @@ func Copy[T any](dst, src Aggregate[T], snapshot io.Writer) error {
 	return nil
 }
 
-// SyncEach applies all entries from r to each Aggregate in argument order. Buf
-// defines the batch size for Read and AddNext. Error is nil on success-not EOF.
-func SyncEach(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
+// Sync applies all entries from r to each Aggregate in argument order. The
+// length of buf defines the batch size for Read and AddNext. Error is nil on
+// success-not EOF.
+func Sync(r stream.Reader, buf []stream.Entry, aggs ...Aggregate[stream.Entry]) (lastRead time.Time, err error) {
 	if len(buf) == 0 {
 		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
 	}

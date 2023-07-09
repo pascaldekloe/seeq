@@ -171,7 +171,7 @@ func TestCopyError(t *testing.T) {
 	})
 }
 
-func TestSyncEach(t *testing.T) {
+func TestSync(t *testing.T) {
 	tests := [][]stream.Entry{
 		{},
 		{{MediaType: "text/plain", Payload: []byte("foo")}},
@@ -183,7 +183,7 @@ func TestSyncEach(t *testing.T) {
 			r := streamtest.NewFixedReader(test...)
 			rec1 := make(Recording, 0)
 			rec2 := make(Recording, 0)
-			_, err := seeq.SyncEach(r, buf, &rec1, &rec2)
+			_, err := seeq.Sync(r, buf, &rec1, &rec2)
 			if err != nil {
 				t.Errorf("got error %q for: %+v", err, test)
 				continue

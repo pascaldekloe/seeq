@@ -170,7 +170,7 @@ func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []Aggr
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
 	for {
-		lastReadTime, err := SyncEach(r, buf, aggs...)
+		lastReadTime, err := Sync(r, buf, aggs...)
 		if err != nil {
 			return fmt.Errorf("aggregate synchronization halt on input: %w", err)
 		}
