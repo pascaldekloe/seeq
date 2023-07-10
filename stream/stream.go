@@ -46,7 +46,7 @@ type Reader interface {
 	// of appearance. The error is non-nil when read count n < len(basket).
 	// Live streams have a shifing io.EOF. Use short polling to follow.
 	//
-	// ⚠️ Clients may not retain Payload from basket[:n]. The bytes stop
+	// ⚠️ Implementations may retain Payload from basket[:n]. The bytes stop
 	// being valid at the next read due to possible buffer reuse.
 	Read(basket []Entry) (n int, err error)
 
@@ -61,7 +61,9 @@ type Reader interface {
 // use from multiple goroutines.
 type Writer interface {
 	// Write adds batch to the stream in ascending order. Errors other than
-	// ErrSizeMax are fatal to a Writer.
+	// ErrSizeMax are fatal to a Writer. Implementations may not retain the
+	// entries, i.e., any mutation to batch after Write must not affect the
+	// stream content.
 	Write(batch []Entry) error
 }
 
@@ -149,7 +151,7 @@ func (f *funnel) Close() error {
 	return nil
 }
 
-// MediaType is the decomposition a MIME definition.
+// A MediaType has the decomposition of a MIME definition.
 //
 // https://www.rfc-editor.org/rfc/rfc2045
 // https://www.iana.org/assignments/media-type-structured-suffix/media-type-structured-suffix.xml
@@ -179,7 +181,8 @@ var (
 	mediaTypeCache     map[string]MediaType
 )
 
-// CachedMediaType resolves or creates a cached instance.
+// CachedMediaType either resolves a cached instance, or it creates a new cached
+// instance with ParseMediaType.
 func CachedMediaType(s string) MediaType {
 	mediaTypeCacheLock.RLock()
 	t, ok := mediaTypeCache[s]

@@ -2,7 +2,7 @@ package stream
 
 import "errors"
 
-// ErrFuture denies an offset beyond the current.
+// ErrFuture denies an offset beyond the number of entries present.
 var ErrFuture = errors.New("stream offset not reached yet")
 
 // ReaderAt provides access to a named stream-collection.
@@ -21,8 +21,8 @@ type ReaderAt interface {
 type Repo interface {
 	ReaderAt
 
-	// AppendTo opens a stream by name. A fail-safe will deny multiple
-	// Writers to append to the same stream.
+	// AppendTo opens a stream by name. When name is opened more than once,
+	// then the redundant writers should return errors only as a fail-safe.
 	AppendTo(name string) WriteCloser
 }
 

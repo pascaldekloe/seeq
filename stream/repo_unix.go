@@ -68,6 +68,7 @@ func (repo *RollingFiles) list(name string) (fileOffsets, error) {
 	return offsets, nil
 }
 
+// ReadAt implements the ReaderAt interface.
 func (repo *RollingFiles) ReadAt(name string, offset uint64) ReadCloser {
 	return &rollingReader{repo: repo, name: name, skipN: offset}
 }
@@ -176,6 +177,7 @@ func (roll *rollingReader) Offset() uint64 {
 // WriteLock protects against multiple writers on the same stream.
 var writeLock sync.Map
 
+// AppendTo implements the Repo interface.
 func (repo *RollingFiles) AppendTo(name string) WriteCloser {
 	w := &rollingWriter{repo: repo, name: name}
 	_, loaded := writeLock.LoadOrStore(filepath.Join(repo.Dir, name), w)
