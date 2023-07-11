@@ -11,7 +11,7 @@ import (
 	"github.com/pascaldekloe/seeq/stream/streamtest"
 )
 
-func TestCloneAll(t *testing.T) {
+func TestAppendCopy(t *testing.T) {
 	var tests = [][]stream.Entry{
 		{},
 		{{}},
@@ -19,7 +19,7 @@ func TestCloneAll(t *testing.T) {
 	}
 
 	for _, entries := range tests {
-		clone := stream.CloneAll(entries...)
+		clone := stream.AppendCopy(nil, entries...)
 		if len(clone) != len(entries) {
 			t.Errorf("got %d entries, want %d", len(clone), len(entries))
 			continue
@@ -98,29 +98,18 @@ func TestFunnel(t *testing.T) {
 	}
 }
 
-func TestCloneAllAlloc(t *testing.T) {
+func TestAppendCopy_alloc(t *testing.T) {
 	e1 := stream.Entry{"text", []byte("one")}
 	e2 := stream.Entry{"text", []byte("two")}
 	e3 := stream.Entry{"text", []byte("three")}
 	e4 := stream.Entry{"text", []byte("four")}
-	t.Run("Variadic", func(t *testing.T) {
-		avg := testing.AllocsPerRun(1, func() {
-			stream.CloneAll(e1, e2, e3, e4)
-		})
-		if avg != 2 {
-			t.Errorf("got %f allocations on average, want 2", avg)
-		}
+	buf := make([]stream.Entry, 0, 4)
+	avg := testing.AllocsPerRun(1, func() {
+		stream.AppendCopy(buf, e1, e2, e3, e4)
 	})
-
-	es := []stream.Entry{e1, e2, e3, e4}
-	t.Run("Slice", func(t *testing.T) {
-		avg := testing.AllocsPerRun(1, func() {
-			stream.CloneAll(es...)
-		})
-		if avg != 2 {
-			t.Errorf("got %f allocations on average, want 2", avg)
-		}
-	})
+	if avg != 1 {
+		t.Errorf("did %f allocations, want 1", avg)
+	}
 }
 
 func ExampleMediaType() {

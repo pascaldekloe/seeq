@@ -18,26 +18,25 @@ type Entry struct {
 	Payload   []byte // content
 }
 
-// CloneAll returns a deep copy of source.
-func CloneAll(source ...Entry) []Entry {
+// AppendCopy adds a deep copy from each src Entry to dst, and it returns the
+// extended buffer.
+func AppendCopy(dst []Entry, entries ...Entry) []Entry {
+	// all payloads in one alloction
 	var byteN int
-	for i := range source {
-		byteN += len(source[i].Payload)
+	for i := range entries {
+		byteN += len(entries[i].Payload)
 	}
-	payloads := make([]byte, byteN)
-	var offset int
+	payloads := make([]byte, 0, byteN)
 
-	clone := make([]Entry, len(source))
-	for i := range source {
-		// read-only strings don't need copy
-		clone[i].MediaType = source[i].MediaType
-
-		end := offset + copy(payloads[offset:], source[i].Payload)
-		clone[i].Payload = payloads[offset:end:end]
-		offset = end
+	for i := range entries {
+		payloads = append(payloads, entries[i].Payload...) // copy
+		dst = append(dst, Entry{
+			Payload:   payloads[:len(payloads):len(payloads)], // cap
+			MediaType: entries[i].MediaType,
+		})
+		payloads = payloads[len(payloads):] // pass
 	}
-
-	return clone
+	return dst
 }
 
 // Reader iterates over stream content in chronological order.

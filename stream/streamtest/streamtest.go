@@ -118,7 +118,10 @@ func (r *channelReader) Read(basket []stream.Entry) (n int, err error) {
 			return n, nil
 		}
 
-		basket[n] = stream.CloneAll(<-r.c)[0]
+		e := <-r.c
+		basket[n].MediaType = e.MediaType
+		// deep copy
+		basket[n].Payload = append([]byte{}, e.Payload...)
 		n++
 	}
 }
@@ -128,7 +131,7 @@ func (r *channelReader) Offset() uint64 { return r.offset }
 
 // NewFixedReader returns a reader which serves a fixed queue.
 func NewFixedReader(queue ...stream.Entry) stream.Reader {
-	queue = stream.CloneAll(queue...)
+	queue = stream.AppendCopy(nil, queue...)
 	r, c := NewChannelReader(len(queue))
 	for i := range queue {
 		c <- queue[i]
