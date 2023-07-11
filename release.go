@@ -173,9 +173,9 @@ func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, proxy *Prox
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
 	for {
-		lastReadTime, err := Sync(r, buf, proxy)
+		lastReadTime, err := Sync(proxy, r, buf)
 		if err != nil {
-			return fmt.Errorf("aggregate synchronization halt on input: %w", err)
+			return err
 		}
 
 		// offer working copy during liveDelay

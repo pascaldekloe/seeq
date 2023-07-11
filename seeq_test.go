@@ -178,16 +178,14 @@ func TestSync(t *testing.T) {
 	run := func(buf []stream.Entry) {
 		for _, test := range tests {
 			r := streamtest.NewFixedReader(test...)
-			rec1 := make(Recording, 0)
-			rec2 := make(Recording, 0)
-			_, err := seeq.Sync(r, buf, &rec1, &rec2)
+			rec := make(Recording, 0)
+			_, err := seeq.Sync(&rec, r, buf)
 			if err != nil {
 				t.Errorf("got error %q for: %+v", err, test)
 				continue
 			}
 
-			rec1.VerifyEqual(t, test...)
-			rec2.VerifyEqual(t, test...)
+			rec.VerifyEqual(t, test...)
 		}
 	}
 

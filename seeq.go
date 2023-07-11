@@ -76,28 +76,26 @@ func Copy(dst, src Snapshotable, snapshot io.Writer) error {
 	return nil
 }
 
-// Sync applies all entries from r to each Aggregate in argument order. The
-// length of buf defines the batch size for Read and AddNext. Error is nil on
-// success-not EOF.
-func Sync[T Aggregate[stream.Entry]](r stream.Reader, buf []stream.Entry, aggs ...T) (lastRead time.Time, err error) {
+// Sync applies all entries from the reader to the aggregate. Buf defines the
+// batch size for the Read–AddNext cycle. Error is nil on completion-not EOF.
+func Sync(agg Aggregate[stream.Entry], r stream.Reader, buf []stream.Entry) (lastRead time.Time, err error) {
 	if len(buf) == 0 {
-		return time.Time{}, errors.New("aggregate feed can't work on empty buffer")
+		return time.Time{}, errors.New("aggregate synchronization with empty buffer")
 	}
 
+	offset := r.Offset()
 	for {
-		offset := r.Offset()
 		n, err := r.Read(buf)
 		if err == io.EOF {
 			lastRead = time.Now()
 		}
 
 		if n > 0 {
-			for i := range aggs {
-				err = aggs[i].AddNext(buf[:n], offset)
-				if err != nil {
-					return time.Time{}, fmt.Errorf("aggregate synchronisation halt at stream entry № %d: %w", offset+uint64(i)+1, err)
-				}
+			err = agg.AddNext(buf[:n], offset)
+			if err != nil {
+				return time.Time{}, fmt.Errorf("aggregate synchronization halted: %w", err)
 			}
+			offset += uint64(uint(n))
 		}
 
 		switch err {
@@ -106,7 +104,7 @@ func Sync[T Aggregate[stream.Entry]](r stream.Reader, buf []stream.Entry, aggs .
 		case io.EOF:
 			return lastRead, nil
 		default:
-			return lastRead, err
+			return time.Time{}, err
 		}
 	}
 }
