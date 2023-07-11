@@ -24,12 +24,12 @@ func (rec *Recording) AddNext(batch []stream.Entry, offset uint64) error {
 	return nil
 }
 
-// DumpTo implements the seeq.Aggregate interface.
+// DumpTo implements the seeq.Snapshotable interface.
 func (rec *Recording) DumpTo(w io.Writer) error {
 	return json.NewEncoder(w).Encode(rec)
 }
 
-// LoadFrom implements the seeq.Aggregate interface.
+// LoadFrom implements the seeq.Snapshotable interface.
 func (rec *Recording) LoadFrom(r io.Reader) error {
 	return json.NewDecoder(r).Decode(rec)
 }
@@ -64,10 +64,7 @@ type FailingSnapshot struct {
 	AfterNBytes int64
 }
 
-// AddNext implements the seeq.Aggregate interface.
-func (fail FailingSnapshot) AddNext(batch []stream.Entry, offset uint64) error { return nil }
-
-// DumpTo implements the seeq.Aggregate interface.
+// DumpTo implements the seeq.Snapshotable interface.
 func (fail FailingSnapshot) DumpTo(w io.Writer) error {
 	if fail.AfterNBytes > 0 {
 		_, err := w.Write(make([]byte, fail.AfterNBytes))
@@ -78,7 +75,7 @@ func (fail FailingSnapshot) DumpTo(w io.Writer) error {
 	return fail.Err
 }
 
-// LoadFrom implements the seeq.Aggregate interface.
+// LoadFrom implements the seeq.Snapshotable interface.
 func (fail FailingSnapshot) LoadFrom(r io.Reader) error {
 	if fail.AfterNBytes > 0 {
 		n, err := io.CopyN(io.Discard, r, fail.AfterNBytes)
@@ -93,7 +90,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("DumpNone", func(t *testing.T) {
 		src := FailingSnapshot{Err: errors.New("DumpNone test error")}
 		dst := FailingSnapshot{AfterNBytes: 99}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		// dst should receive the error from src
 		const want = "failing snapshot load got error before 99 bytes: DumpNone test error"
@@ -105,7 +102,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("DumpSome", func(t *testing.T) {
 		src := FailingSnapshot{AfterNBytes: 2, Err: errors.New("DumpSome test error")}
 		dst := FailingSnapshot{AfterNBytes: 99}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		// dst should receive the error from src
 		const want = "failing snapshot load got error before 99 bytes: DumpSome test error"
@@ -117,7 +114,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("DumpEOF", func(t *testing.T) {
 		src := FailingSnapshot{AfterNBytes: 2, Err: io.EOF}
 		dst := FailingSnapshot{AfterNBytes: 99}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		// dst should receive the error from src
 		const want = "failing snapshot load got error before 99 bytes: aggregate snapshot dump did EOF"
@@ -129,7 +126,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("LoadNone", func(t *testing.T) {
 		src := FailingSnapshot{AfterNBytes: 99}
 		dst := FailingSnapshot{Err: errors.New("LoadNone test error")}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		const want = "LoadNone test error"
 		if err == nil || err.Error() != want {
@@ -140,7 +137,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("LoadSome", func(t *testing.T) {
 		src := FailingSnapshot{AfterNBytes: 99}
 		dst := FailingSnapshot{AfterNBytes: 2, Err: errors.New("LoadSome test error")}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		const want = "LoadSome test error"
 		if err == nil || err.Error() != want {
@@ -151,7 +148,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("IgnoreSome", func(t *testing.T) {
 		src := FailingSnapshot{AfterNBytes: 10}
 		dst := FailingSnapshot{AfterNBytes: 2}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		const want = "aggregate seeq_test.FailingSnapshot left 8 bytes after snapshot load"
 		if err == nil || err.Error() != want {
@@ -162,7 +159,7 @@ func TestCopyError(t *testing.T) {
 	t.Run("ErrAfter", func(t *testing.T) {
 		src := FailingSnapshot{AfterNBytes: 10, Err: errors.New("ErrAfter test error")}
 		dst := FailingSnapshot{AfterNBytes: 2, Err: nil}
-		err := seeq.Copy[stream.Entry](dst, src, nil)
+		err := seeq.Copy(dst, src, nil)
 
 		const want = "aggregate seeq_test.FailingSnapshot snapshot dump after load: ErrAfter test error"
 		if err == nil || err.Error() != want {

@@ -50,6 +50,7 @@ import (
 // SnapshotAggregate[stream.Entry].
 type ReleaseSync[T any] struct {
 	groupConfig[T]
+	newGroup func() (*T, error)
 
 	// latest singleton, or nil initially
 	live chan *Fix[T]
@@ -66,13 +67,14 @@ type ReleaseSync[T any] struct {
 // must match stream offset zero.
 func NewReleaseSync[T any](constructor func() (*T, error)) (*ReleaseSync[T], error) {
 	// read & validate configuration
-	c, err := newGroupConfig(constructor)
+	c, err := newGroupConfig[T]()
 	if err != nil {
 		return nil, err
 	}
 
 	sync := ReleaseSync[T]{
 		groupConfig: *c,
+		newGroup:    constructor,
 		live:        make(chan *Fix[T], 1),
 		release:     make(chan Fix[T]),
 		interrupt:   make(chan struct{}, 1),
@@ -103,12 +105,12 @@ func (sync *ReleaseSync[T]) SyncFrom(r stream.Reader) error {
 	default:
 	}
 
-	group, aggs, err := sync.newGroup()
+	group, err := sync.newGroup()
 	if err != nil {
 		return err
 	}
-
-	return sync.syncGroupFrom(r, group, aggs)
+	proxy, snaps := sync.groupConfig.extract(group)
+	return sync.syncGroupFrom(r, group, proxy, snaps)
 }
 
 // SyncFromRepo until failure or Interrupt.
@@ -123,12 +125,13 @@ func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string)
 	default:
 	}
 
-	group, aggs, err := sync.newGroup()
+	group, err := sync.newGroup()
 	if err != nil {
 		return err
 	}
+	proxy, snaps := sync.groupConfig.extract(group)
 
-	offset, err := snapshot.LastCommon(sync.Snapshots, sync.aggNames...)
+	offset, err := snapshot.LastCommon(sync.Snapshots, sync.groupConfig.aggNames...)
 	if err != nil {
 		return err
 	}
@@ -136,22 +139,23 @@ func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string)
 		return sync.SyncFrom(streams.ReadAt(streamName, 0))
 	}
 
-	errs := make(chan error, len(aggs))
-	for i := range aggs {
+	names := sync.groupConfig.aggNames
+	errs := make(chan error, len(names))
+	for i := range names {
 		go func(i int) {
-			r, err := sync.Snapshots.Open(sync.aggNames[i], offset)
+			r, err := sync.Snapshots.Open(names[i], offset)
 			if err != nil {
 				errs <- err
 				return
 			}
-			err = aggs[i].LoadFrom(r)
+			err = snaps[i].LoadFrom(r)
 			r.Close()
 			errs <- err
 		}(i)
 	}
 
 	var errN int
-	for range aggs {
+	for range snaps {
 		err := <-errs
 		if err != nil {
 			errN++
@@ -162,15 +166,15 @@ func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string)
 		return fmt.Errorf("synchronisation halt on %d snapshot recovery error(s)", errN)
 	}
 
-	return sync.syncGroupFrom(streams.ReadAt(streamName, offset), group, aggs)
+	return sync.syncGroupFrom(streams.ReadAt(streamName, offset), group, proxy, snaps)
 }
 
-func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []SnapshotAggregate[stream.Entry]) error {
+func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, proxy *Proxy[stream.Entry], snaps []Snapshotable) error {
 	// once live the Fix is offered to release
 	var offerTimer *time.Timer // short-poll delay
 	buf := make([]stream.Entry, 99)
 	for {
-		lastReadTime, err := Sync(r, buf, aggs...)
+		lastReadTime, err := Sync(r, buf, proxy)
 		if err != nil {
 			return fmt.Errorf("aggregate synchronization halt on input: %w", err)
 		}
@@ -191,7 +195,7 @@ func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []Snap
 			}
 
 			// swap working copy
-			group, aggs, err = sync.forkGroup(r.Offset(), aggs)
+			group, proxy, snaps, err = sync.forkGroup(r.Offset(), snaps)
 			if err != nil {
 				return err
 			}
@@ -201,15 +205,16 @@ func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, aggs []Snap
 	}
 }
 
-func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []SnapshotAggregate[stream.Entry]) (*T, []SnapshotAggregate[stream.Entry], error) {
-	group, aggs, err := sync.newGroup()
+func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []Snapshotable) (*T, *Proxy[stream.Entry], []Snapshotable, error) {
+	group, err := sync.newGroup()
 	if err != nil {
-		return nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
+		return nil, nil, nil, fmt.Errorf("aggregate synchronization halt on instantiation: %w", err)
 	}
+	proxy, snaps := sync.groupConfig.extract(group)
 
 	// parallel Copy each aggregate
-	done := make(chan error, len(aggs)) // buffer preserves order
-	for i := range aggs {
+	done := make(chan error, len(snaps)) // buffer preserves order
+	for i := range snaps {
 		go func(i int) {
 			var prod snapshot.Production
 			if sync.Snapshots != nil {
@@ -220,7 +225,7 @@ func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []SnapshotAggregate[str
 				}
 			}
 
-			err := Copy(aggs[i], old[i], prod)
+			err := Copy(snaps[i], old[i], prod)
 			done <- err
 
 			switch {
@@ -241,7 +246,7 @@ func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []SnapshotAggregate[str
 	}
 
 	var errs []error
-	for range aggs {
+	for range snaps {
 		err := <-done
 		if err != nil {
 			errs = append(errs, err)
@@ -249,9 +254,9 @@ func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []SnapshotAggregate[str
 	}
 	err = errors.Join(errs...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return group, aggs, nil
+	return group, proxy, snaps, nil
 }
 
 // ErrLiveFuture denies freshness.

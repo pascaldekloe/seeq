@@ -24,12 +24,10 @@ type Aggregate[T any] interface {
 	AddNext(batch []T, offset uint64) error
 }
 
-// A SnapshotAggregate can persist and recover its state in full. Both LoadFrom
-// and AddNext shall execute in isolation. DumpTo is considdered as a read-only
-// operation, and may therefore be invoked simultaneously with query methods.
-type SnapshotAggregate[T any] interface {
-	Aggregate[T]
-
+// A Snapshotable can persist and recover its state in full. LoadFrom must
+// execute in isolation. DumpTo is considdered to be a read-only operation.
+// Therefore, DumpTo may be invoked simultaneously with query methods.
+type Snapshotable interface {
 	// DumpTo produces a snapshot/serial/backup of the Aggregate's state.
 	// When the implementation makes use of third-party storage such as a
 	// database, then the snapshot should include the stored content.
@@ -41,7 +39,7 @@ type SnapshotAggregate[T any] interface {
 }
 
 // Copy the state from src into dst. Snapshot may be omitted with nil.
-func Copy[T any](dst, src SnapshotAggregate[T], snapshot io.Writer) error {
+func Copy(dst, src Snapshotable, snapshot io.Writer) error {
 	pr, pw := io.Pipe()
 	defer pr.Close()
 
@@ -125,21 +123,26 @@ type Fix[T any] struct {
 	LiveAt time.Time
 }
 
-// groupConfig has the configuration of each embedded Aggregate.
+// groupConfig defines a struct setup with embedded aggregates.
 type groupConfig[Group any] struct {
-	constructor     func() (*Group, error)
 	aggFieldIndices []int    // struct position
 	aggNames        []string // user label (from tag)
+
+	snapshotables    []int // indexes which implement Snapshotable
+	notSnapshotables []int // indexes which do not implement Snapshotable
 }
 
-func newGroupConfig[Group any](constructor func() (*Group, error)) (*groupConfig[Group], error) {
-	c := groupConfig[Group]{constructor: constructor}
-
+func newGroupConfig[Group any]() (*groupConfig[Group], error) {
 	groupType := reflect.TypeOf((*Group)(nil)).Elem()
-	aggType := reflect.TypeOf((*Aggregate[stream.Entry])(nil)).Elem()
 	if k := groupType.Kind(); k != reflect.Struct {
 		return nil, fmt.Errorf("aggregate group %s is of kind %s—not %s", groupType, k, reflect.Struct)
 	}
+
+	var c groupConfig[Group]
+
+	// stream.Entry only for now
+	aggType := reflect.TypeOf((*Aggregate[stream.Entry])(nil)).Elem()
+	snapshotableType := reflect.TypeOf((*Snapshotable)(nil)).Elem()
 
 	fieldN := groupType.NumField()
 	for i := 0; i < fieldN; i++ {
@@ -153,6 +156,7 @@ func newGroupConfig[Group any](constructor func() (*Group, error)) (*groupConfig
 
 		name, _, _ := strings.Cut(tag, ",")
 		if name == "" {
+			// default to path in group struct(ure)
 			name = groupType.String() + "." + field.Name
 		}
 		c.aggNames = append(c.aggNames, name)
@@ -162,6 +166,9 @@ func newGroupConfig[Group any](constructor func() (*Group, error)) (*groupConfig
 		}
 		if !field.Type.Implements(aggType) {
 			return nil, fmt.Errorf("aggregate group %s, field %s, type %s does not implement %s", groupType, field.Name, field.Type, aggType)
+		}
+		if !field.Type.Implements(snapshotableType) {
+			return nil, fmt.Errorf("aggregate group %s, field %s, type %s does not implement %s", groupType, field.Name, field.Type, snapshotableType)
 		}
 	}
 
@@ -186,17 +193,15 @@ func newGroupConfig[Group any](constructor func() (*Group, error)) (*groupConfig
 	return &c, nil
 }
 
-func (c *groupConfig[Group]) newGroup() (*Group, []SnapshotAggregate[stream.Entry], error) {
-	group, err := c.constructor()
-	if err != nil {
-		return nil, nil, err
-	}
+func (c *groupConfig[Group]) extract(g *Group) (*Proxy[stream.Entry], []Snapshotable) {
+	aggs := make([]Aggregate[stream.Entry], 0, len(c.aggFieldIndices))
+	snaps := make([]Snapshotable, 0, len(c.aggFieldIndices))
 
-	aggs := make([]SnapshotAggregate[stream.Entry], len(c.aggFieldIndices))
-	v := reflect.ValueOf(group).Elem()
-	for i := range aggs {
-		aggs[i] = v.Field(c.aggFieldIndices[i]).Interface().(SnapshotAggregate[stream.Entry])
+	v := reflect.ValueOf(g).Elem()
+	for i := range c.aggFieldIndices {
+		agg := v.Field(c.aggFieldIndices[i]).Interface()
+		aggs = append(aggs, agg.(Aggregate[stream.Entry]))
+		snaps = append(snaps, agg.(Snapshotable))
 	}
-
-	return group, aggs, nil
+	return NewProxy(aggs...), snaps
 }
