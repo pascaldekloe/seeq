@@ -51,9 +51,9 @@ func Example() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	fix, err := sync.LiveSince(ctx, time.Now().Add(-100*time.Millisecond))
+	fix, err := sync.LiveSince(time.Now().Add(-100*time.Millisecond), ctx.Done())
 	if err != nil {
-		fmt.Println("aggregate lookup expired:", err)
+		fmt.Println("aggregate group unavailable:", err)
 		return
 	}
 

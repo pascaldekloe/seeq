@@ -1,7 +1,6 @@
 package seeq
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -259,18 +258,21 @@ func (sync *ReleaseSync[T]) forkGroup(offset uint64, old []Snapshotable) (*T, *P
 	return group, proxy, snaps, nil
 }
 
+// ErrCancel signals a client abort.
+var ErrCancel = errors.New("aggregate lookup canceled")
+
 // ErrLiveFuture denies freshness.
 var ErrLiveFuture = errors.New("aggregate from future not available")
 
-// LiveSince returns a T live no older than notBefore. The notBefore range is
-// protected with ErrLiveFuture.
-func (sync *ReleaseSync[T]) LiveSince(ctx context.Context, notBefore time.Time) (Fix[T], error) {
+// LiveSince returns a T which was live no older than notBefore. The notBefore
+// range is protected with ErrLiveFuture. Cancel is optional as nil just blocks.
+// Cancel receive causes an ErrCancel.
+func (sync *ReleaseSync[T]) LiveSince(notBefore time.Time, cancel <-chan struct{}) (Fix[T], error) {
 	tolerance := time.Since(notBefore)
 	if tolerance < 0 {
 		return Fix[T]{}, ErrLiveFuture
 	}
 
-	ctxDone := ctx.Done()
 	select {
 	case fix := <-sync.live:
 		switch {
@@ -282,8 +284,8 @@ func (sync *ReleaseSync[T]) LiveSince(ctx context.Context, notBefore time.Time) 
 			sync.live <- fix // unlock singleton
 			return *fix, nil
 		}
-	case <-ctxDone:
-		return Fix[T]{}, ctx.Err()
+	case <-cancel:
+		return Fix[T]{}, ErrCancel
 	}
 
 	for {
@@ -296,9 +298,9 @@ func (sync *ReleaseSync[T]) LiveSince(ctx context.Context, notBefore time.Time) 
 			}
 			sync.live <- &fix // unlock
 			return fix, nil
-		case <-ctxDone:
+		case <-cancel:
 			sync.live <- nil // unlock [waste for nothing]
-			return Fix[T]{}, ctx.Err()
+			return Fix[T]{}, ErrCancel
 		}
 	}
 }

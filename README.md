@@ -87,7 +87,7 @@ an option to update aggregates in a group with just a `struct` container and its
 contstuctor.
 
 ```go
-// RFCSeries demonstrates the grouping of five custom aggregates.
+// RFCSeries demonstrates the grouping of five aggregates.
 type RFCSeries struct {
 	Statuses  *RFCStatusIndex `aggregate:"rfc-status"`
 	Refs      *ReferenceGraph `aggregate:"rfc-ref"`
@@ -96,7 +96,7 @@ type RFCSeries struct {
 	Abstracts *fulltext.Index `aggregate:"rfc-abstract"`
 }
 
-// NewRFCSeries returns a new set of aggregates.
+// NewRFCSeries returns a new group of aggregates.
 func NewRFCSeries() (*RFCSeries, error) {
 	// initialize/construct each aggregate
 	…
@@ -107,9 +107,9 @@ The example above can be fed with `seeq.NewReleaseSync(NewRFCSeries)`.
 
 ```go
 	// resolve aggregates no older than a minute ago
-	fix, err := sync.LiveSince(ctx, time.Now().Add(-time.Minute))
+	fix, err := sync.LiveSince(time.Now().Add(-time.Minute), ctx.Done())
 	if err != nil {
-		log.Print("context expired during aggregate aquire")
+		log.Print("aggregates unavailable: ", err)
 		return
 	}
 
