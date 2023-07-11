@@ -12,15 +12,14 @@ import (
 	"github.com/pascaldekloe/seeq/stream"
 )
 
-// An Aggregate consumes a stream of T—typically stream.Entry—in order to serve
-// specific queries. Interpretations may use any combination of fields and/or
-// methods to do so. AddNext must execute sequentially, in isolation, and before
-// any of such queries.
+// An Aggregate consumes a stream of T to serve queries. Implementations may
+// expose any combination of fields and/or methods for such queries. AddNext
+// must execute in isolation.
 type Aggregate[T any] interface {
 	// AddNext consumes a stream in chronological order. Offset counts the
 	// number of entries before the first batch element. Malformed content
-	// should be reported only. The stream must continue at all times. An
-	// error return is fatal to the Aggregate.
+	// should be reported only. The stream must continue at all times. Any
+	// error returned invalidates the Aggregate. No cleanup required.
 	AddNext(batch []T, offset uint64) error
 }
 
@@ -76,7 +75,7 @@ func Copy(dst, src Snapshotable, snapshot io.Writer) error {
 	return nil
 }
 
-// Sync applies all entries from the reader to the aggregate. Buf defines the
+// Sync applies all entries from the Reader to the Aggregate. Buf defines the
 // batch size for the Read–AddNext cycle. Error is nil on completion-not EOF.
 func Sync(agg Aggregate[stream.Entry], r stream.Reader, buf []stream.Entry) (lastRead time.Time, err error) {
 	if len(buf) == 0 {

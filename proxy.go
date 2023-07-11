@@ -12,9 +12,9 @@ type addNextCall[T any] struct {
 	offset uint64
 }
 
-// Proxy forwards Aggregate (AddNext) invocation to its delegates. Delagates
+// Proxy forwards Aggregate[T] (AddNext) invocation to its delegates. Delagates
 // from the constructor get invoked sequentially. AddParallel launches its own
-// routines.
+// goroutines.
 type Proxy[T any] struct {
 	sequential []Aggregate[T]
 
@@ -51,9 +51,9 @@ func (p *Proxy[T]) AddParallel(agg Aggregate[T]) {
 	}()
 }
 
-// Halt removes all Aggregates, and it stops all parallel routines. Use only
-// after aggregation stopped. Most usecases will run their aggregates for the
-// entire lifespan of the application though.
+// Halt removes all Aggregates, and it stops all parallel goroutines.
+// Aggregation must be stoped before Halt. Most usecases will run their
+// aggregates for the entire lifespan of the application though.
 func (p *Proxy[T]) Halt() {
 	p.sequential = nil
 
@@ -65,7 +65,7 @@ func (p *Proxy[T]) Halt() {
 	p.parallelN = 0
 }
 
-// AddNext implements the Aggregate interface.
+// AddNext implements the Aggregate[T] interface.
 func (p *Proxy[T]) AddNext(batch []T, offset uint64) error {
 	// any and all parallel routines should be waiting at this point
 	for n := p.parallelN; n > 0; n-- {
