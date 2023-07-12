@@ -181,24 +181,31 @@ func (r *errorReader) Read(basket []stream.Entry) (n int, err error) {
 // Offset implements the stream.Reader interface.
 func (r *errorReader) Offset() uint64 { return r.r.Offset() }
 
-// DelayReader returns a reader which delays every read from r with d.
+// DelayReader returns a reader which makes every read from r last at least d.
 func DelayReader(r stream.Reader, d time.Duration) stream.Reader {
-	return &delayReader{r, d}
+	t := time.NewTimer(0)
+	if !t.Stop() {
+		<-t.C
+	}
+	return &delayReader{r, d, t}
 }
 
 type delayReader struct {
-	r stream.Reader
-	d time.Duration
+	stream.Reader
+	time.Duration
+	*time.Timer
 }
 
 // Read implements the stream.Reader interface.
-func (r *delayReader) Read(basket []stream.Entry) (n int, err error) {
-	time.Sleep(r.d)
-	return verifiedRead(r.r, basket)
+func (delay *delayReader) Read(basket []stream.Entry) (n int, err error) {
+	delay.Timer.Reset(delay.Duration)
+	n, err = verifiedRead(delay.Reader, basket)
+	<-delay.Timer.C
+	return
 }
 
 // Offset implements the stream.Reader interface.
-func (r *delayReader) Offset() uint64 { return r.r.Offset() }
+func (delay *delayReader) Offset() uint64 { return delay.Reader.Offset() }
 
 // DripReader returns a reader which hits EOF every n entries from r, starting
 // with the first.
