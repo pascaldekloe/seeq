@@ -108,6 +108,72 @@ func Sync(agg Aggregate[stream.Entry], r stream.Reader, buf []stream.Entry) (las
 	}
 }
 
+// Async is like Sync but asynchronous. The throughput can double when the
+// Reader and the Aggregate both use about the same amount of time per entry.
+// When either one uses significantly more time than the other, then the memory
+// copy and channel exchange overhead is probably not worth it.
+func Async(agg Aggregate[stream.Entry], r stream.Reader, batchN int) (lastRead time.Time, err error) {
+	if batchN <= 0 {
+		return time.Time{}, fmt.Errorf("aggregate synchronization with batch size %d", batchN)
+	}
+
+	feed := make(chan []stream.Entry, 1)
+	pool := make(chan []stream.Entry, 2)    // feed ♻️
+	pool <- make([]stream.Entry, 0, batchN) // carrier 1 🚄
+	pool <- make([]stream.Entry, 0, batchN) // carrier 2 🚄
+
+	offset := r.Offset()
+
+	// read routine
+	readDone := make(chan time.Time, 1)
+	readFail := make(chan error, 1)
+	go func() {
+		defer close(feed)
+		defer close(readDone)
+		defer close(readFail)
+
+		readBuf := make([]stream.Entry, batchN)
+		for batch := range pool {
+			n, err := r.Read(readBuf)
+			switch err {
+			case nil:
+				feed <- stream.AppendCopy(batch[:0], readBuf[:n]...)
+
+			case io.EOF:
+				timestamp := time.Now()
+				if n != 0 {
+					feed <- readBuf[:n]
+				}
+				readDone <- timestamp
+				return
+
+			default:
+				readFail <- err
+				return
+			}
+		}
+	}()
+
+	for batch := range feed {
+		if len(batch) > 0 {
+			err = agg.AddNext(batch, offset)
+			if err != nil {
+				close(pool) // stop read routine
+				<-feed      // await exit
+				readErr := <-readFail
+				if readErr != nil {
+					err = errors.Join(err, readErr)
+				}
+				return <-readDone, fmt.Errorf("aggregate synchronization halted: %w", err)
+			}
+			offset += uint64(uint(len(batch)))
+		}
+		pool <- batch[:0]
+	}
+
+	return <-readDone, <-readFail
+}
+
 // Fix has a live T frozen to serve queries.
 type Fix[T any] struct {
 	Q *T // read-only
