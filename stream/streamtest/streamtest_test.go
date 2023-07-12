@@ -99,3 +99,38 @@ func TestReaderRoutines(t *testing.T) {
 		t.Fatalf("second read got (%d, %v), want (0, %s)", n, err, want)
 	}
 }
+
+// verify interface compliance
+var _ = stream.Reader((*streamtest.RepeatReader)(nil))
+
+func TestRepeatReader(t *testing.T) {
+	const testMediaType = "text/plain"
+	const testPayload = "Peekaboo!"
+	const testOffset = 10
+	r := streamtest.RepeatReader{
+		MediaType: testMediaType,
+		Payload:   []byte(testPayload),
+		ReadCount: testOffset,
+	}
+
+	var basket [3]stream.Entry
+	n, err := r.Read(basket[:])
+	if err != nil {
+		t.Fatal("read error:", err)
+	}
+	if n != len(basket) {
+		t.Errorf("read %d entries, want %d (full basket)", n, len(basket))
+	}
+	for _, e := range basket {
+		if e.MediaType != testMediaType || string(e.Payload) != testPayload {
+			t.Errorf("got %q %q, want %q %q", e.MediaType, e.Payload, testMediaType, testPayload)
+		}
+	}
+
+	got := r.Offset()
+	want := testOffset + uint64(len(basket))
+	if got != want {
+		t.Errorf("got offset %d, want %d after reading %d since the start with %d",
+			got, want, len(basket), testOffset)
+	}
+}

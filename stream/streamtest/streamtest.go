@@ -139,6 +139,26 @@ func NewFixedReader(queue ...stream.Entry) stream.Reader {
 	return r
 }
 
+// NewRepeatReader returns a reader which serves the same content endlessly.
+type RepeatReader struct {
+	MediaType string
+	Payload   []byte
+	ReadCount int
+}
+
+// Offset implements the stream.Reader interface.
+func (repeated *RepeatReader) Offset() uint64 { return uint64(uint(repeated.ReadCount)) }
+
+// Read implements the stream.Reader interface.
+func (repeated *RepeatReader) Read(basket []stream.Entry) (n int, err error) {
+	for i := range basket {
+		basket[i].MediaType = repeated.MediaType
+		basket[i].Payload = append(basket[i].Payload[:0], repeated.Payload...)
+	}
+	repeated.ReadCount += len(basket)
+	return len(basket), nil
+}
+
 // ErrorReader returns a reader which replaces EOF from r with err.
 func ErrorReader(r stream.Reader, err error) stream.Reader {
 	return &errorReader{r, err}
