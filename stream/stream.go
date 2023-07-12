@@ -78,6 +78,30 @@ type WriteCloser interface {
 	io.Closer
 }
 
+// A LimitReader reads from Reader but stops with EOF after N entries.
+type LimitReader struct {
+	Reader
+	N int64 // limit
+}
+
+// Offset implements the Reader interface.
+func (limited *LimitReader) Offset() uint64 { return limited.Reader.Offset() }
+
+// Read implements the Reader interface.
+func (limited *LimitReader) Read(basket []Entry) (n int, err error) {
+	if limited.N == 0 {
+		return 0, io.EOF
+	}
+
+	if int64(len(basket)) > limited.N {
+		basket = basket[:limited.N]
+	}
+
+	n, err = limited.Reader.Read(basket)
+	limited.N -= int64(n)
+	return
+}
+
 // NewFunnel returns a new Writer proxy which can be used by multiple goroutines
 // simultaneously. The funnel may concatenate multiple Writes [batches] into one
 // Write operation towards out. Funnel Write gets io.ErrClosedPipe after Close.
