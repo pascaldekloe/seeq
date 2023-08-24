@@ -115,7 +115,7 @@ func (sync *ReleaseSync[T]) SyncFrom(r stream.Reader) error {
 // SyncFromRepo until failure or Interrupt.
 func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string) error {
 	if sync.Snapshots == nil {
-		return sync.SyncFrom(streams.ReadAt(streamName, 0))
+		return sync.SyncFrom(streams.ReaderAt(streamName, 0))
 	}
 
 	// clear any pending interrupt request
@@ -135,7 +135,7 @@ func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string)
 		return err
 	}
 	if offset == 0 {
-		return sync.SyncFrom(streams.ReadAt(streamName, 0))
+		return sync.SyncFrom(streams.ReaderAt(streamName, 0))
 	}
 
 	names := sync.groupConfig.aggNames
@@ -165,7 +165,7 @@ func (sync *ReleaseSync[T]) SyncFromRepo(streams stream.Repo, streamName string)
 		return fmt.Errorf("synchronisation halt on %d snapshot recovery error(s)", errN)
 	}
 
-	return sync.syncGroupFrom(streams.ReadAt(streamName, offset), group, proxy, snaps)
+	return sync.syncGroupFrom(streams.ReaderAt(streamName, offset), group, proxy, snaps)
 }
 
 func (sync *ReleaseSync[T]) syncGroupFrom(r stream.Reader, group *T, proxy *Proxy[stream.Entry], snaps []Snapshotable) error {

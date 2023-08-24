@@ -159,7 +159,9 @@ func Async(agg Aggregate[stream.Entry], r stream.Reader, batchN int) (lastRead t
 			err = agg.AddNext(batch, offset)
 			if err != nil {
 				close(pool) // stop read routine
-				<-feed      // await exit
+				for range feed {
+					continue // flush 🚽
+				}
 				readErr := <-readFail
 				if readErr != nil {
 					err = errors.Join(err, readErr)

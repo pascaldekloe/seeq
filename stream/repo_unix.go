@@ -68,8 +68,8 @@ func (repo *RollingFiles) list(name string) (fileOffsets, error) {
 	return offsets, nil
 }
 
-// ReadAt implements the ReaderAt interface.
-func (repo *RollingFiles) ReadAt(name string, offset uint64) ReadCloser {
+// ReaderAt implements the Collection interface.
+func (repo *RollingFiles) ReaderAt(name string, offset uint64) ReadCloser {
 	return &rollingReader{repo: repo, name: name, skipN: offset}
 }
 
@@ -178,6 +178,11 @@ func (roll *rollingReader) Offset() uint64 {
 var writeLock sync.Map
 
 // AppendTo implements the Repo interface.
+//
+// BUG(pascaldekloe): A RollingFiles stream can have only one Writer at a time.
+// Redundant Writers return errors exclusively as a safety measure. NewFunnel
+// allows for writing with multiple go routines. Chis Wellons explains the issue
+// with writev(2) well at <https://nullprogram.com/blog/2016/08/03/>.
 func (repo *RollingFiles) AppendTo(name string) WriteCloser {
 	w := &rollingWriter{repo: repo, name: name}
 	_, loaded := writeLock.LoadOrStore(filepath.Join(repo.Dir, name), w)

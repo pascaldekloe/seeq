@@ -56,8 +56,7 @@ type Reader interface {
 
 // Writer appends stream content.
 //
-// Only a single goroutine may invoke Write. Wrap a Writer with a NewFunnel for
-// use from multiple goroutines.
+// Wrap a Writer with NewFunnel for use from multiple goroutines.
 type Writer interface {
 	// Write adds batch to the stream in ascending order. Errors other than
 	// ErrSizeMax are fatal to a Writer. Implementations may not retain the

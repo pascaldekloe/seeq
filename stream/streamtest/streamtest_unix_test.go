@@ -17,7 +17,7 @@ func TestNewRepoWith(t *testing.T) {
 	}
 	repo := streamtest.NewRepoWith(t, streamName, entries...)
 
-	r := repo.ReadAt(streamName, 0)
+	r := repo.ReaderAt(streamName, 0)
 	streamtest.VerifyContent(t, r, entries...)
 	err := r.Close()
 	if err != nil {
